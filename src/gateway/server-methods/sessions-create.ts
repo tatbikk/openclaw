@@ -531,7 +531,7 @@ export const sessionCreateHandlers: GatewayRequestHandlers = {
       loadGatewayModelCatalog: () =>
         context.loadGatewayModelCatalog({ agentId: modelCatalogAgentId }),
       ...(authority.commitGuard ? { commitGuard: authority.commitGuard } : {}),
-      afterCreate: async ({ key, agentId, entry, storePath }) => {
+      afterCreate: async ({ key, agentId, entry, storePath, initialTurnIdempotencyKey }) => {
         // Session persistence already committed under the guard. Closure after
         // that point may suppress follow-on work, but cannot roll back the session.
         if (!authority.hasActive()) {
@@ -559,7 +559,7 @@ export const sessionCreateHandlers: GatewayRequestHandlers = {
               sessionKey: key,
               ...(key === "global" ? { agentId } : {}),
               message: initialMessage ?? "",
-              idempotencyKey: randomUUID(),
+              idempotencyKey: initialTurnIdempotencyKey ?? randomUUID(),
               ...(initialAttachments ? { attachments: initialAttachments } : {}),
             },
             respond: (ok, payload, error, meta) => {
@@ -652,7 +652,11 @@ export const sessionCreateHandlers: GatewayRequestHandlers = {
       },
       undefined,
     );
-    emitSessionArchived(context, created.archivedParentSessionKey);
+    emitSessionArchived(
+      context,
+      created.archivedParentSessionKey,
+      created.archivedParentSessionKey === "global" ? created.agentId : undefined,
+    );
     emitSessionsChanged(context, {
       sessionKey: created.key,
       ...(created.key === "global" ? { agentId: created.agentId } : {}),
