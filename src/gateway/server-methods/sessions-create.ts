@@ -41,12 +41,11 @@ import {
 import { createAgentRuntimeAuthorityGuard } from "./agent-runtime-authority.js";
 import { chatHandlers } from "./chat.js";
 import { resolveRegisteredCatalogCreateTarget } from "./session-catalog.js";
-import { emitSessionArchived, emitSessionsChanged } from "./session-change-event.js";
+import { emitSessionsChanged } from "./session-change-event.js";
 import { captureCreatedSessionDiffBaseline } from "./session-create-diff-baseline.js";
 import {
   resolveSessionCreateInitialTurn,
   shouldAttachPendingMessageSeq,
-  validateSessionRecoveryCreateParams,
 } from "./session-create-initial-turn.js";
 import { resolveOperatorSessionCreation } from "./session-creation-provenance.js";
 import { sessionLog } from "./sessions-shared.js";
@@ -60,11 +59,6 @@ export const sessionCreateHandlers: GatewayRequestHandlers = {
       return;
     }
     const p = params;
-    const recoveryParamsError = validateSessionRecoveryCreateParams(p);
-    if (recoveryParamsError) {
-      respond(false, undefined, errorShape(ErrorCodes.INVALID_REQUEST, recoveryParamsError));
-      return;
-    }
     const cfg = context.getRuntimeConfig();
     const authority = createAgentRuntimeAuthorityGuard(client, context, respond);
     const catalogId = normalizeOptionalString(p.catalogId);
@@ -521,7 +515,6 @@ export const sessionCreateHandlers: GatewayRequestHandlers = {
       // A plain New Chat with no cwd must not inherit the prior session cwd.
       clearSpawnedCwd: p.worktree !== true && !sessionCwd,
       fork: p.fork,
-      recover: p.recover,
       succeedsParent: p.succeedsParent,
       emitCommandHooks: p.emitCommandHooks,
       resetMainWhenUnspecified: !hasInitialTurn,
@@ -531,7 +524,7 @@ export const sessionCreateHandlers: GatewayRequestHandlers = {
       loadGatewayModelCatalog: () =>
         context.loadGatewayModelCatalog({ agentId: modelCatalogAgentId }),
       ...(authority.commitGuard ? { commitGuard: authority.commitGuard } : {}),
-      afterCreate: async ({ key, agentId, entry, storePath, initialTurnIdempotencyKey }) => {
+      afterCreate: async ({ key, agentId, entry, storePath }) => {
         // Session persistence already committed under the guard. Closure after
         // that point may suppress follow-on work, but cannot roll back the session.
         if (!authority.hasActive()) {
@@ -559,7 +552,7 @@ export const sessionCreateHandlers: GatewayRequestHandlers = {
               sessionKey: key,
               ...(key === "global" ? { agentId } : {}),
               message: initialMessage ?? "",
-              idempotencyKey: initialTurnIdempotencyKey ?? randomUUID(),
+              idempotencyKey: randomUUID(),
               ...(initialAttachments ? { attachments: initialAttachments } : {}),
             },
             respond: (ok, payload, error, meta) => {
@@ -651,11 +644,6 @@ export const sessionCreateHandlers: GatewayRequestHandlers = {
         ...(createdWorktree ? { worktree: createdWorktree } : {}),
       },
       undefined,
-    );
-    emitSessionArchived(
-      context,
-      created.archivedParentSessionKey,
-      created.archivedParentSessionKey === "global" ? created.agentId : undefined,
     );
     emitSessionsChanged(context, {
       sessionKey: created.key,
