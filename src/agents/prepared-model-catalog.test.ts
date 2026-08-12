@@ -56,6 +56,7 @@ vi.mock("./prepared-model-runtime.scoped-catalog.js", () => ({
   prepareScopedReadOnlyModelCatalog: (...args: unknown[]) => mocks.prepareScopedCatalog(...args),
 }));
 
+import { setPreparedModelFullCatalogAuth } from "./prepared-model-catalog-worker.js";
 import { PreparedModelCatalogConfigReplacedError } from "./prepared-model-catalog.errors.js";
 import {
   getPublishedPreparedModelCatalogOwnerSnapshot,
@@ -197,8 +198,9 @@ describe("prepared model catalog access", () => {
       entries: [{ provider: "test", id: "discovered", name: "Discovered" }],
       routeVariants: [],
     };
-    const loadFullModelCatalog = vi.fn(async () => discoveredCatalog);
     const { authStore, ...snapshotFacts } = fullSnapshot;
+    setPreparedModelFullCatalogAuth(discoveredCatalog, { authStore, authModes: {} });
+    const loadFullModelCatalog = vi.fn(async () => discoveredCatalog);
     const snapshot = {
       ...snapshotFacts,
       modelCatalog: configuredCatalog,

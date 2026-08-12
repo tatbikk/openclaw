@@ -80,7 +80,6 @@ vi.mock("./prepared-model-catalog-worker.js", () => ({
     agentFacts: {
       input: unknown;
       authStore: unknown;
-      credentials: unknown;
       providerIds: unknown;
     };
   }) => ({
@@ -88,7 +87,6 @@ vi.mock("./prepared-model-catalog-worker.js", () => ({
     generationFingerprint: "test-generation",
     input: agentFacts.input,
     authStore: agentFacts.authStore,
-    credentials: agentFacts.credentials,
     providerIds: agentFacts.providerIds,
   }),
   runPreparedModelCatalogWorker: (...args: unknown[]) =>
