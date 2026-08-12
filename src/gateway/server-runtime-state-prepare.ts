@@ -108,13 +108,9 @@ export async function prepareGatewayKernelState(params: {
     registry: pluginBootstrap.pluginRegistry,
     baseGatewayMethods: pluginBootstrap.baseGatewayMethods,
   };
-  // Unconfigured clean installs get no service; durable rows still need list/status projection.
-  const hasConfiguredWorkerProfiles =
-    Object.keys(gatewayPluginConfigAtStart.cloudWorkers?.profiles ?? {}).length > 0;
-  const shouldStartWorkerEnvironmentService =
-    hasConfiguredWorkerProfiles ||
-    Boolean(workerEnvironmentStartup?.records.length) ||
-    Boolean(workerEnvironmentStartup?.hasNonlocalPlacementRecords);
+  // The core device provider is configuration-free, so every full Gateway owns the
+  // worker service even when no plugin-backed cloud profile has been configured.
+  const shouldStartWorkerEnvironmentService = Boolean(workerEnvironmentStartup);
   const hostDesktopConfig = gatewayPluginConfigAtStart.desktop?.host;
   const hostDesktopEnabled = hostDesktopConfig?.enabled === true;
   const workerGatewayEndpoint = {
@@ -149,7 +145,8 @@ export async function prepareGatewayKernelState(params: {
           });
         })
       : {};
-  const { workerEnvironmentService, workerLiveEvents } = workerEnvironmentRuntime;
+  const { workerEnvironmentService, workerLiveEvents, bindDeviceNodeRegistry } =
+    workerEnvironmentRuntime;
   // Assigned once approval managers exist; placement dispatch must not run before then.
   const workerDispatchAuthority = {
     revoke: (_params: { sessionId: string; sessionKeys: readonly string[] }): void => {
@@ -163,7 +160,7 @@ export async function prepareGatewayKernelState(params: {
           return placementModule.createGatewayWorkerPlacementRuntime({
             placements: workerEnvironmentStartup.placementStore,
             environments: workerEnvironmentService,
-            admitNewPlacements: hasConfiguredWorkerProfiles,
+            admitNewPlacements: true,
             revokeSessionAuthority: (request) => workerDispatchAuthority.revoke(request),
             warn: (message) => log.warn(message),
           });
@@ -174,11 +171,8 @@ export async function prepareGatewayKernelState(params: {
       workerPlacementRuntime.dispatchService.dispatch,
     );
   }
-  // Without configured profiles, existing placements still reconcile but new dispatches stay off.
   const workerPlacementControlAvailable = workerPlacementRuntime?.dispatchService;
-  const workerPlacementDispatchAvailable = hasConfiguredWorkerProfiles
-    ? workerPlacementControlAvailable
-    : undefined;
+  const workerPlacementDispatchAvailable = workerPlacementControlAvailable;
   const workerDesktopObserveAvailable =
     Boolean(workerEnvironmentService) && gatewayPluginConfigAtStart.cloudWorkers?.desktop === true;
   const desktopObserveAvailable = workerDesktopObserveAvailable || Boolean(hostDesktopService);
@@ -463,9 +457,9 @@ export async function prepareGatewayKernelState(params: {
   return {
     ...bootstrap,
     pluginRuntime,
-    hasConfiguredWorkerProfiles,
     workerEnvironmentService,
     workerLiveEvents,
+    bindDeviceNodeRegistry,
     workerDispatchAuthority,
     workerPlacementRuntime,
     workerPlacementControlAvailable,

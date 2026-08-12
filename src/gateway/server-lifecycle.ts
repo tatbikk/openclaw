@@ -100,6 +100,7 @@ export async function prepareGatewayLifecycle(params: {
     defaultWorkspaceDir,
     activeTaskCount,
     residentRegistry,
+    bindDeviceNodeRegistry,
   } = runtime;
   const completeControlUiDeviceAuthMigrationForEffectiveOperator = (
     device: EffectiveOperatorDeviceIdentity,
@@ -180,6 +181,7 @@ export async function prepareGatewayLifecycle(params: {
       removeRemoteNodeInfoForConnection(nodeId, connId);
     },
   });
+  bindDeviceNodeRegistry?.(nodeRegistry);
   const { createWatchNodeHttpRuntime } = await import("./watch-node-http.js");
   const watchNodeHttpRuntime = createWatchNodeHttpRuntime({
     nodeRegistry,
