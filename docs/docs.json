@@ -1131,6 +1131,7 @@
                   "install/railway",
                   "install/raspberry-pi",
                   "install/render",
+                  "install/runpod",
                   "install/upstash"
                 ]
               },
