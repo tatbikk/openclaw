@@ -145,6 +145,39 @@ Telegram is the full OpenClaw control plane: messages may create agent turns,
 use tools, and request execution approval. It is deliberately separate from
 the stateless one-inference endpoint in `deploy/runpod-serverless/`.
 
+## How your real accounts reach the Pod
+
+The Pod is a separate host. **Nothing carries over from the machine you develop
+on**, and no credential file should be copied there. Each account is connected on
+the Pod itself, through a flow you complete in your own browser.
+
+| What                                      | Where you run it | How your account connects                                                     |
+| ----------------------------------------- | ---------------- | ----------------------------------------------------------------------------- |
+| OpenClaw's OpenAI login (path 2)          | Pod terminal     | Device code: the Pod prints a URL and short code, you open it in your browser |
+| Codex ACP harness (path 3)                | Pod terminal     | `openclaw-relay-auth codex` signs in to the isolated Codex home               |
+| Claude Code (path 3)                      | **your machine** | `claude setup-token` exports a portable token from your existing login        |
+| Anthropic for OpenClaw's turns (optional) | Pod terminal     | The same setup-token, stored as an OpenClaw auth profile                      |
+
+Claude Code is the one credential that originates on your machine, because it has
+no device-code flow for a remote host and its credential reuse assumes the same
+host. That export is deliberate and produces a token, not a copied file.
+
+Do not copy `~/.codex/auth.json` or `~/.claude/.credentials.json` to the Pod. A
+dropped-in Codex credential file is not a runtime auth store and will not be
+used; importing one requires an explicit `openclaw migrate` run. Device login
+avoids the problem entirely.
+
+Two consequences worth planning around:
+
+- Signing in on the Pod does not sign you out on your laptop. The OAuth sessions
+  are independent.
+- Usage limits are per account, not per host. Whatever the Pod consumes comes out
+  of the same subscription quota you use locally.
+
+Order matters: start the Pod before signing anything in. The isolated Codex home
+for the relay path is generated on first Gateway boot and does not exist before
+that.
+
 ## Sign in with the ChatGPT subscription
 
 Open the Pod terminal and run this once:
