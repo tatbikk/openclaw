@@ -13,6 +13,20 @@ requirements. Do not try to collapse them into one endpoint.
 `local/` is the Windows helper for running and testing the same stack on your
 own machine before paying RunPod for it.
 
+## Publishing the images
+
+`publish.ps1` builds both RunPod images for `linux/amd64` and pushes them. Log in
+to your registry first, in your own terminal, so no credential is ever passed as
+a script argument or stored here:
+
+```powershell
+docker login ghcr.io
+powershell -ExecutionPolicy Bypass -File deploy/publish.ps1 -Registry ghcr.io/<you>
+```
+
+Add `-Target pod` or `-Target serverless` to publish one image, and `-SkipPush`
+to build without publishing.
+
 ## Path 1 — direct, one call, back fast
 
 An external program posts a prompt and gets text back. No agent turn, no tools,
