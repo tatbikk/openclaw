@@ -186,6 +186,27 @@ run_openclaw config set --batch-json "$(
   '
 )" >/dev/null
 
+# This image owns exactly these bundled runtime surfaces. Telegram remains a
+# transport plugin; acpx is the ACP harness runtime behind the relay path. Both
+# provider plugins are permitted so OpenClaw's own turns can run on the OpenAI
+# or the Anthropic subscription; the active model still decides which is used.
+# Every entry must stay in this restrictive inventory or it is blocked outright.
+#
+# This block must run before any model reference is written. A provider that is
+# not yet in plugins.allow contributes no models, so setting a default model
+# first fails with "Unknown model" and kills the boot under `set -e`.
+run_openclaw config set plugins.allow '["openai","anthropic","deepseek","codex","telegram","acpx"]' --strict-json >/dev/null
+if ! run_openclaw config get plugins.entries.codex.enabled >/dev/null 2>&1; then
+  run_openclaw config set plugins.entries.codex.enabled true --strict-json >/dev/null
+fi
+run_openclaw config set plugins.entries.telegram.enabled true --strict-json >/dev/null
+run_openclaw config set plugins.entries.acpx.enabled true --strict-json >/dev/null
+if ! run_openclaw config get plugins.entries.codex.config.appServer.homeScope >/dev/null 2>&1; then
+  # RunPod owns an OpenClaw OAuth profile on the volume; never depend on a
+  # developer machine's ~/.codex/auth.json or a secret copied into the image.
+  run_openclaw config set plugins.entries.codex.config.appServer.homeScope agent >/dev/null
+fi
+
 # A plain API key needs no browser, so a Pod with DEEPSEEK_API_KEY has a working
 # brain on its very first boot. That agent can then drive the interactive
 # ChatGPT and Codex logins over Telegram instead of requiring a Pod terminal.
@@ -203,22 +224,6 @@ if ! run_openclaw config get agents.defaults.model.primary >/dev/null 2>&1; then
 fi
 if ! run_openclaw config get 'agents.defaults.models["openai/gpt-5.6-sol"].agentRuntime.id' >/dev/null 2>&1; then
   run_openclaw config set 'agents.defaults.models["openai/gpt-5.6-sol"].agentRuntime.id' codex >/dev/null
-fi
-# This image owns exactly these bundled runtime surfaces. Telegram remains a
-# transport plugin; acpx is the ACP harness runtime behind the relay path. Both
-# provider plugins are permitted so OpenClaw's own turns can run on the OpenAI
-# or the Anthropic subscription; the active model still decides which is used.
-# Every entry must stay in this restrictive inventory or it is blocked outright.
-run_openclaw config set plugins.allow '["openai","anthropic","deepseek","codex","telegram","acpx"]' --strict-json >/dev/null
-if ! run_openclaw config get plugins.entries.codex.enabled >/dev/null 2>&1; then
-  run_openclaw config set plugins.entries.codex.enabled true --strict-json >/dev/null
-fi
-run_openclaw config set plugins.entries.telegram.enabled true --strict-json >/dev/null
-run_openclaw config set plugins.entries.acpx.enabled true --strict-json >/dev/null
-if ! run_openclaw config get plugins.entries.codex.config.appServer.homeScope >/dev/null 2>&1; then
-  # RunPod owns an OpenClaw OAuth profile on the volume; never depend on a
-  # developer machine's ~/.codex/auth.json or a secret copied into the image.
-  run_openclaw config set plugins.entries.codex.config.appServer.homeScope agent >/dev/null
 fi
 
 exec runuser -u node -- "$@"
