@@ -165,10 +165,20 @@ run_openclaw config set --batch-json "$(
   '
 )" >/dev/null
 
-# Choose subscription-backed defaults only when the operator has not already
-# made an explicit choice. Config itself remains authoritative after redeploys.
+# A plain API key needs no browser, so a Pod with DEEPSEEK_API_KEY has a working
+# brain on its very first boot. That agent can then drive the interactive
+# ChatGPT and Codex logins over Telegram instead of requiring a Pod terminal.
+# Without the key, fall back to the subscription model, which needs a login first.
+if [ -n "${DEEPSEEK_API_KEY:-}" ]; then
+  bootstrap_model=deepseek/deepseek-v4-pro
+else
+  bootstrap_model=openai/gpt-5.6-sol
+fi
+
+# Choose defaults only when the operator has not already made an explicit
+# choice. Config itself remains authoritative after redeploys.
 if ! run_openclaw config get agents.defaults.model.primary >/dev/null 2>&1; then
-  run_openclaw config set agents.defaults.model.primary openai/gpt-5.6-sol >/dev/null
+  run_openclaw config set agents.defaults.model.primary "$bootstrap_model" >/dev/null
 fi
 if ! run_openclaw config get 'agents.defaults.models["openai/gpt-5.6-sol"].agentRuntime.id' >/dev/null 2>&1; then
   run_openclaw config set 'agents.defaults.models["openai/gpt-5.6-sol"].agentRuntime.id' codex >/dev/null
@@ -178,7 +188,7 @@ fi
 # provider plugins are permitted so OpenClaw's own turns can run on the OpenAI
 # or the Anthropic subscription; the active model still decides which is used.
 # Every entry must stay in this restrictive inventory or it is blocked outright.
-run_openclaw config set plugins.allow '["openai","anthropic","codex","telegram","acpx"]' --strict-json >/dev/null
+run_openclaw config set plugins.allow '["openai","anthropic","deepseek","codex","telegram","acpx"]' --strict-json >/dev/null
 if ! run_openclaw config get plugins.entries.codex.enabled >/dev/null 2>&1; then
   run_openclaw config set plugins.entries.codex.enabled true --strict-json >/dev/null
 fi

@@ -100,6 +100,7 @@ Configure the template with:
 | Container Start Command   | Leave empty                                                                |
 | `OPENCLAW_GATEWAY_TOKEN`  | `{{ RUNPOD_SECRET_openclaw_gateway_token }}`                               |
 | `TELEGRAM_BOT_TOKEN`      | `{{ RUNPOD_SECRET_telegram_bot_token }}`                                   |
+| `DEEPSEEK_API_KEY`        | `{{ RUNPOD_SECRET_deepseek_api_key }}` — recommended, see below            |
 | `CLAUDE_CODE_OAUTH_TOKEN` | `{{ RUNPOD_SECRET_claude_code_oauth_token }}` — only for Claude Code relay |
 | `TZ`                      | An IANA zone such as `Europe/Paris`                                        |
 
@@ -144,6 +145,37 @@ to `allowlist`.
 Telegram is the full OpenClaw control plane: messages may create agent turns,
 use tools, and request execution approval. It is deliberately separate from
 the stateless one-inference endpoint in `deploy/runpod-serverless/`.
+
+## Recommended: let the agent set itself up
+
+Every other credential here needs a browser, which a Pod does not have. A plain
+API key does not. Set `DEEPSEEK_API_KEY` and the Pod boots with a working agent
+on its very first start, before any login exists.
+
+The startup wrapper detects the key and selects `deepseek/deepseek-v4-pro` as the
+bootstrap model. Without the key it selects the OpenAI subscription model, which
+cannot answer until someone completes a login first.
+
+That changes the setup from a terminal session into a conversation:
+
+1. Pair Telegram with the bot.
+2. Ask the agent to sign in to ChatGPT. It runs the device-code login, requests
+   your approval through the inline buttons, and sends you the URL and code.
+3. Open the link on your phone or laptop and sign in.
+4. Ask it to run `openclaw-relay-auth status`, then have it sign the Codex ACP
+   harness in the same way.
+
+No Pod terminal, no copied files. DeepSeek is a pay-per-token key and this agent
+only spends it while orchestrating; the coding work itself runs on the
+subscriptions. You can switch the brain to a subscription model afterwards:
+
+```bash
+openclaw config set agents.defaults.model.primary openai/gpt-5.6-sol
+```
+
+If you send the agent a secret over Telegram, remember the value then exists in
+that chat history. Prefer flows where the agent shows you a link to approve
+rather than ones where you paste a credential to it.
 
 ## How your real accounts reach the Pod
 
