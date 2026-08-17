@@ -30,6 +30,18 @@ if [ -z "${TELEGRAM_BOT_TOKEN:-}" ]; then
   exit 64
 fi
 
+# Naming the owner up front replaces the pairing handshake, which otherwise needs
+# a Pod terminal to approve the one-time code. Get the numeric id from
+# @userinfobot on Telegram.
+telegram_owner_id=${TELEGRAM_OWNER_ID:-}
+case "$telegram_owner_id" in
+  "") ;;
+  *[!0-9]*)
+    echo "TELEGRAM_OWNER_ID must be the numeric Telegram user id, digits only." >&2
+    exit 64
+    ;;
+esac
+
 case "$acpx_permission_mode" in
   approve-all | approve-reads | deny-all) ;;
   *)
@@ -123,8 +135,10 @@ run_openclaw config set --batch-json "$(
   ACPX_STATE_DIR="$acpx_state_dir" \
   ACPX_PERMISSION_MODE="$acpx_permission_mode" \
   ACPX_NON_INTERACTIVE_PERMISSIONS="$acpx_non_interactive_permissions" \
+  TELEGRAM_OWNER_ID="$telegram_owner_id" \
   node -e '
     const origin = process.env.CONTROL_UI_ORIGIN;
+    const ownerId = (process.env.TELEGRAM_OWNER_ID || "").trim();
     process.stdout.write(JSON.stringify([
       { path: "gateway.mode", value: "local" },
       { path: "gateway.auth.mode", value: "token" },
@@ -134,7 +148,14 @@ run_openclaw config set --batch-json "$(
       },
       { path: "gateway.controlUi.allowedOrigins", value: [origin] },
       { path: "channels.telegram.enabled", value: true },
-      { path: "channels.telegram.dmPolicy", value: "pairing" },
+      // A named owner talks to the bot immediately. Without one, the first
+      // message only returns a pairing code that must be approved on the Pod.
+      ...(ownerId
+        ? [
+            { path: "channels.telegram.dmPolicy", value: "allowlist" },
+            { path: "channels.telegram.allowFrom", value: [ownerId] },
+          ]
+        : [{ path: "channels.telegram.dmPolicy", value: "pairing" }]),
       { path: "channels.telegram.groupPolicy", value: "disabled" },
       { path: "channels.telegram.configWrites", value: false },
       { path: "channels.telegram.streaming.mode", value: "off" },

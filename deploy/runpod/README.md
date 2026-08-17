@@ -101,6 +101,7 @@ Configure the template with:
 | `OPENCLAW_GATEWAY_TOKEN`  | `{{ RUNPOD_SECRET_openclaw_gateway_token }}`                               |
 | `TELEGRAM_BOT_TOKEN`      | `{{ RUNPOD_SECRET_telegram_bot_token }}`                                   |
 | `DEEPSEEK_API_KEY`        | `{{ RUNPOD_SECRET_deepseek_api_key }}` — recommended, see below            |
+| `TELEGRAM_OWNER_ID`       | Your numeric Telegram user id — skips the pairing handshake                |
 | `CLAUDE_CODE_OAUTH_TOKEN` | `{{ RUNPOD_SECRET_claude_code_oauth_token }}` — only for Claude Code relay |
 | `TZ`                      | An IANA zone such as `Europe/Paris`                                        |
 
@@ -124,23 +125,38 @@ https://<POD_ID>-18789.proxy.runpod.net
 If you put a stable HTTPS reverse proxy in front later, set
 `OPENCLAW_CONTROL_UI_ORIGIN` to that exact origin and restart the Pod.
 
-## Pair the Telegram owner
+## First contact on Telegram
 
-Send the bot a direct message. It replies with a one-time pairing code. Approve
-that code in the Pod terminal:
+The bot reaches Telegram by outbound long polling: the Pod repeatedly asks
+Telegram's servers whether anything arrived. Nothing connects inward, so there is
+no webhook, no domain, and no port to open. The bot is reachable the moment the
+Pod finishes starting.
+
+Who is allowed to talk to it depends on one optional variable.
+
+### With `TELEGRAM_OWNER_ID` set (recommended)
+
+Get your numeric id from [@userinfobot](https://t.me/userinfobot) and put it in
+the template. The wrapper then admits exactly that one account and nobody else.
+Send the bot a message and it answers straight away — no pairing code, no Pod
+terminal, nothing to approve.
+
+### Without it
+
+The channel starts in pairing mode. Your first message returns a one-time code
+that has to be approved before the bot will talk, which needs a Pod terminal:
 
 ```bash
 runuser -u node -- openclaw pairing list telegram
 runuser -u node -- openclaw pairing approve telegram <PAIRING_CODE>
 ```
 
-Send a second message to prove the complete Telegram round trip. This template
-accepts DMs only, disables groups and Telegram-initiated config writes, and
-routes execution approvals to private inline buttons. The first approved DM
-owner becomes the command owner. For a hardened one-owner installation, get
-the numeric Telegram user ID from `openclaw pairing list telegram`, set
-`channels.telegram.allowFrom` to that ID, then change `dmPolicy` from `pairing`
-to `allowlist`.
+The first approved account becomes the owner. You can name the owner later at any
+time by setting the variable and restarting the Pod.
+
+Either way the template accepts direct messages only, disables groups and
+Telegram-initiated config writes, and routes execution approvals to private
+inline buttons.
 
 Telegram is the full OpenClaw control plane: messages may create agent turns,
 use tools, and request execution approval. It is deliberately separate from
