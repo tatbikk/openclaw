@@ -15,9 +15,30 @@ own machine before paying RunPod for it.
 
 ## Publishing the images
 
-`publish.ps1` builds both RunPod images for `linux/amd64` and pushes them. Log in
-to your registry first, in your own terminal, so no credential is ever passed as
-a script argument or stored here:
+Two routes. Prefer GitHub Actions unless you specifically want a local image.
+
+### On GitHub (no local Docker needed)
+
+The **RunPod Deploy Images** workflow builds both images for `linux/amd64` and
+pushes them to your own GHCR namespace. It needs no secret: Actions supplies the
+token. Run it from the repository's **Actions** tab, choose `both`, `pod`, or
+`serverless`, and set the tag.
+
+Two things to know the first time:
+
+- On a fork, GitHub disables Actions until you enable them once on the Actions
+  tab. The workflow only ever runs when you press the button.
+- A newly published GHCR package is **private**, and RunPod cannot pull a private
+  image anonymously. Either make it public under **Packages > Package settings >
+  Change visibility**, or add registry credentials in RunPod.
+
+The run summary prints the exact image reference to paste into RunPod.
+
+### Locally
+
+`publish.ps1` does the same on your machine. Log in to your registry first, in
+your own terminal, so no credential is ever passed as a script argument or stored
+here:
 
 ```powershell
 docker login ghcr.io
@@ -25,7 +46,8 @@ powershell -ExecutionPolicy Bypass -File deploy/publish.ps1 -Registry ghcr.io/<y
 ```
 
 Add `-Target pod` or `-Target serverless` to publish one image, and `-SkipPush`
-to build without publishing.
+to build without publishing. This route needs a working Docker daemon, which on
+Windows means CPU virtualization enabled in firmware plus the WSL2 backend.
 
 ## Path 1 — direct, one call, back fast
 
