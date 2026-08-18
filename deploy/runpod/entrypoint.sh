@@ -240,4 +240,12 @@ if ! run_openclaw config get 'agents.defaults.models["openai/gpt-5.6-sol"].agent
   run_openclaw config set 'agents.defaults.models["openai/gpt-5.6-sol"].agentRuntime.id' codex >/dev/null
 fi
 
+# The Gateway resolves every bind mode to an IPv4 address, so a platform whose
+# private network is IPv6-only cannot reach it and would need a public ingress
+# just to serve a sibling service. Naming a port here puts an IPv6 socket in
+# front of the loopback Gateway instead. Unset means unchanged behaviour.
+if [ -n "${OPENCLAW_IPV6_PROXY_PORT:-}" ]; then
+  runuser -u node -- node /usr/local/lib/openclaw-ipv6-proxy.js &
+fi
+
 exec runuser -u node -- "$@"

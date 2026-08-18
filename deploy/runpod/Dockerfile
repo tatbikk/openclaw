@@ -49,6 +49,7 @@ COPY --from=plugin-seed --chown=node:node /opt/openclaw-plugin-seed /opt/opencla
 
 COPY --chmod=755 deploy/runpod/entrypoint.sh /usr/local/bin/openclaw-runpod
 COPY --chmod=755 deploy/runpod/relay-auth.sh /usr/local/bin/openclaw-relay-auth
+COPY --chmod=755 deploy/runpod/ipv6-proxy.js /usr/local/lib/openclaw-ipv6-proxy.js
 
 ENV OPENCLAW_HOME=/workspace/openclaw/home \
     XDG_CONFIG_HOME=/workspace/openclaw/config \
