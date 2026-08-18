@@ -88,6 +88,16 @@ install -d -m 0700 -o node -g node \
   "$acpx_state_dir" \
   "$code_workspace"
 
+# `install -d` fixes directory ownership but never the files already inside. One
+# privileged command run through a platform shell - `openclaw config set` as root,
+# for instance - rewrites openclaw.json and the state database as root, and from
+# then on every boot dies with EACCES because the unprivileged Gateway cannot read
+# its own config. Repair those two owners here, while still root.
+for state_file in "$state_dir/openclaw.json" "$state_dir"/openclaw.sqlite*; do
+  [ -e "$state_file" ] || continue
+  chown node:node "$state_file" 2>/dev/null || true
+done
+
 # Claude Code authenticates from the harness process environment. Without one of
 # these the `claude` ACP harness fails at spawn time; the Codex harness and every
 # OpenAI path stay unaffected, so this is a warning rather than a boot failure.
