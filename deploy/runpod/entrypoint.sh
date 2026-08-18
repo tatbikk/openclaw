@@ -172,6 +172,11 @@ run_openclaw config set --batch-json "$(
         ? [
             { path: "channels.telegram.dmPolicy", value: "allowlist" },
             { path: "channels.telegram.allowFrom", value: [ownerId] },
+            // allowFrom lets the owner talk to the bot; ownerAllowFrom is the
+            // separate gate for owner-only commands like /acp spawn, /config,
+            // and exec approvals. Without this, the owner sees "not authorized"
+            // on every owner-gated command even though DM auth passes.
+            { path: "commands.ownerAllowFrom", value: [`telegram:${ownerId}`] },
           ]
         : [{ path: "channels.telegram.dmPolicy", value: "pairing" }]),
       { path: "channels.telegram.groupPolicy", value: "disabled" },
