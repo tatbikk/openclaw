@@ -88,15 +88,19 @@ install -d -m 0700 -o node -g node \
   "$acpx_state_dir" \
   "$code_workspace"
 
-# `install -d` fixes directory ownership but never the files already inside. One
-# privileged command run through a platform shell - `openclaw config set` as root,
-# for instance - rewrites openclaw.json and the state database as root, and from
-# then on every boot dies with EACCES because the unprivileged Gateway cannot read
-# its own config. Repair those two owners here, while still root.
-for state_file in "$state_dir/openclaw.json" "$state_dir"/openclaw.sqlite*; do
-  [ -e "$state_file" ] || continue
-  chown node:node "$state_file" 2>/dev/null || true
-done
+# `install -d` fixes directory ownership but never the files already inside. A
+# single privileged command run through a platform shell - `openclaw config set`
+# or `openclaw agent` as root - leaves root-owned files scattered through this
+# tree, and the unprivileged Gateway then dies with EACCES on whichever one it
+# reaches first: openclaw.json, the state database, or an agent's models.json.
+# Recovery is nearly impossible once it starts, because the container no longer
+# stays up long enough to open a shell in.
+#
+# Repair the whole tree rather than named files, so one pass fixes every such
+# file instead of surfacing them one crash at a time. This is metadata-only work
+# and stays cheap even on a large volume.
+chown -R node:node "$runtime_root" 2>/dev/null || true
+chown -R node:node "$code_workspace" 2>/dev/null || true
 
 # Claude Code authenticates from the harness process environment. Without one of
 # these the `claude` ACP harness fails at spawn time; the Codex harness and every
