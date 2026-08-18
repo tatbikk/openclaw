@@ -13,6 +13,7 @@ code_workspace=${OPENCLAW_CODE_WORKSPACE:-/workspace/code}
 
 codex_plugin_version=${OPENCLAW_RUNPOD_CODEX_PLUGIN_VERSION:-2026.7.2-beta.7}
 acpx_plugin_version=${OPENCLAW_RUNPOD_ACPX_PLUGIN_VERSION:-2026.7.2-beta.7}
+deepseek_plugin_version=${OPENCLAW_RUNPOD_DEEPSEEK_PLUGIN_VERSION:-2026.7.2-beta.7}
 
 # ACP harness sessions have no TTY, so a harness permission prompt cannot be
 # answered. approve-all lets the relay and coding paths actually write files and
@@ -106,7 +107,7 @@ volume_has_state() {
 # A fresh volume gets the whole pre-installed plugin state. An existing volume is
 # never overwritten: report the exact one-time install instead of clobbering a
 # database and OAuth profile that are already in use.
-if ! plugin_installed codex || ! plugin_installed acpx; then
+if ! plugin_installed codex || ! plugin_installed acpx || ! plugin_installed deepseek-provider; then
   if volume_has_state; then
     echo "OpenClaw state exists on this volume but a required plugin is missing." >&2
     echo "Run these once in the Pod terminal, then restart the Pod:" >&2
@@ -115,6 +116,9 @@ if ! plugin_installed codex || ! plugin_installed acpx; then
     fi
     if ! plugin_installed acpx; then
       echo "  runuser -u node -- openclaw plugins install npm:@openclaw/acpx@${acpx_plugin_version}" >&2
+    fi
+    if ! plugin_installed deepseek-provider; then
+      echo "  runuser -u node -- openclaw plugins install npm:@openclaw/deepseek-provider@${deepseek_plugin_version}" >&2
     fi
     echo "Alternatively start from a fresh Network Volume to use the image's pre-installed plugins." >&2
     exit 66
