@@ -190,16 +190,33 @@ run_openclaw config set --batch-json "$(
   '
 )" >/dev/null
 
-# This image owns exactly these bundled runtime surfaces. Telegram remains a
-# transport plugin; acpx is the ACP harness runtime behind the relay path. Both
-# provider plugins are permitted so OpenClaw's own turns can run on the OpenAI
-# or the Anthropic subscription; the active model still decides which is used.
-# Every entry must stay in this restrictive inventory or it is blocked outright.
+# plugins.allow is a restrictive inventory: a provider missing from it contributes
+# no models and is blocked outright, with no error explaining why. Pinning a fixed
+# list here meant every provider key added later - Google, Mistral, anything - was
+# silently ignored until this file changed. OpenClaw's own default is to load every
+# bundled plugin, so keep that behaviour and clear any list a previous boot wrote.
 #
-# This block must run before any model reference is written. A provider that is
-# not yet in plugins.allow contributes no models, so setting a default model
-# first fails with "Unknown model" and kills the boot under `set -e`.
-run_openclaw config set plugins.allow '["openai","anthropic","deepseek","codex","telegram","acpx"]' --strict-json >/dev/null
+# Set OPENCLAW_PLUGINS_ALLOW to a comma-separated list only when you deliberately
+# want a locked-down inventory; it must then name every plugin this image needs,
+# including codex, telegram, and acpx.
+if [ -n "${OPENCLAW_PLUGINS_ALLOW:-}" ]; then
+  run_openclaw config set plugins.allow "$(
+    OPENCLAW_PLUGINS_ALLOW="$OPENCLAW_PLUGINS_ALLOW" node -e '
+      const entries = String(process.env.OPENCLAW_PLUGINS_ALLOW)
+        .split(",")
+        .map((value) => value.trim())
+        .filter(Boolean);
+      if (entries.length === 0) {
+        throw new Error("OPENCLAW_PLUGINS_ALLOW must name at least one plugin");
+      }
+      process.stdout.write(JSON.stringify(entries));
+    '
+  )" --strict-json >/dev/null
+else
+  run_openclaw config unset plugins.allow >/dev/null 2>&1 || true
+fi
+# A single-model policy allowlist blocks every other model the same silent way.
+run_openclaw config unset agents.defaults.modelPolicy.allow >/dev/null 2>&1 || true
 if ! run_openclaw config get plugins.entries.codex.enabled >/dev/null 2>&1; then
   run_openclaw config set plugins.entries.codex.enabled true --strict-json >/dev/null
 fi

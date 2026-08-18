@@ -1,7 +1,0 @@
-{
-  "$schema": "https://railway.com/railway.schema.json",
-  "deploy": {
-    "startCommand": "sh -c 'if [ \"${OPENCLAW_KEEP_PROVIDER_LIMITS:-0}\" != \"1\" ]; then node /app/openclaw.mjs config unset plugins.allow >/dev/null 2>&1 || true; node /app/openclaw.mjs config unset agents.defaults.modelPolicy.allow >/dev/null 2>&1 || true; fi; exec node /app/openclaw.mjs gateway'",
-    "restartPolicyType": "ON_FAILURE"
-  }
-}
