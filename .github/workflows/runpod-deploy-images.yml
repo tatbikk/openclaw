@@ -21,6 +21,15 @@ on:
         description: "Image tag"
         type: string
         default: 2026.7.2-beta.7
+  # A change to the deployment files is the whole reason to rebuild, so build on
+  # push too. Manual runs keep their chosen target and tag; a push builds both
+  # images and tags them `main` plus the immutable commit sha.
+  push:
+    branches: [main]
+    paths:
+      - "deploy/runpod/**"
+      - "deploy/runpod-serverless/**"
+      - ".github/workflows/runpod-deploy-images.yml"
 
 permissions:
   contents: read
@@ -52,7 +61,7 @@ jobs:
       - name: Decide whether this image was requested
         id: requested
         env:
-          TARGET: ${{ inputs.target }}
+          TARGET: ${{ inputs.target || 'both' }}
           KEY: ${{ matrix.key }}
         run: |
           if [ "$TARGET" = "both" ] || [ "$TARGET" = "$KEY" ]; then
@@ -74,7 +83,7 @@ jobs:
         env:
           OWNER: ${{ github.repository_owner }}
           NAME: ${{ matrix.name }}
-          TAG: ${{ inputs.tag }}
+          TAG: ${{ inputs.tag || 'main' }}
         run: |
           owner=$(printf '%s' "$OWNER" | tr '[:upper:]' '[:lower:]')
           echo "image=ghcr.io/${owner}/${NAME}" >> "$GITHUB_OUTPUT"
