@@ -205,6 +205,10 @@ if ! run_openclaw config get plugins.entries.codex.enabled >/dev/null 2>&1; then
 fi
 run_openclaw config set plugins.entries.telegram.enabled true --strict-json >/dev/null
 run_openclaw config set plugins.entries.acpx.enabled true --strict-json >/dev/null
+# Allowing and installing a provider is not enough: a disabled provider plugin
+# contributes no models, so the DeepSeek bootstrap model below would still be
+# rejected as unknown.
+run_openclaw config set plugins.entries.deepseek.enabled true --strict-json >/dev/null
 if ! run_openclaw config get plugins.entries.codex.config.appServer.homeScope >/dev/null 2>&1; then
   # RunPod owns an OpenClaw OAuth profile on the volume; never depend on a
   # developer machine's ~/.codex/auth.json or a secret copied into the image.
@@ -223,8 +227,14 @@ fi
 
 # Choose defaults only when the operator has not already made an explicit
 # choice. Config itself remains authoritative after redeploys.
+# A default model is a convenience, not a boot requirement: the Gateway, the
+# Telegram transport, and the relay path all work without one. Never let an
+# unusable bootstrap model crash-loop the container — warn and carry on so the
+# operator can fix the model over chat instead of from the logs alone.
 if ! run_openclaw config get agents.defaults.model.primary >/dev/null 2>&1; then
-  run_openclaw config set agents.defaults.model.primary "$bootstrap_model" >/dev/null
+  if ! run_openclaw config set agents.defaults.model.primary "$bootstrap_model" >/dev/null 2>&1; then
+    echo "warning: could not set default model $bootstrap_model. The Gateway and Telegram still start; set agents.defaults.model.primary to a model this build knows." >&2
+  fi
 fi
 if ! run_openclaw config get 'agents.defaults.models["openai/gpt-5.6-sol"].agentRuntime.id' >/dev/null 2>&1; then
   run_openclaw config set 'agents.defaults.models["openai/gpt-5.6-sol"].agentRuntime.id' codex >/dev/null
