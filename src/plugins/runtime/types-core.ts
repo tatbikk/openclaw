@@ -92,6 +92,13 @@ type RuntimeCreateSessionEntryContext = RuntimeCreateSessionEntryResult & {
   /** Host creation authority; runtimes that cannot supply it must leave it absent. */
   initialization?: import("../../sessions/session-initialization.js").SessionInitialization;
 };
+type RuntimeOrdinarySessionTarget = {
+  agentId: string;
+  created: boolean;
+  sessionId: string;
+  sessionKey: string;
+  storePath: string;
+};
 type RuntimeCreateSessionEntryFinalPatch = {
   pluginExtensions: RuntimeSessionPluginExtensions;
 };
@@ -375,6 +382,9 @@ export type PluginRuntimeCore = {
     ensureAgentWorkspace: typeof import("../../agents/workspace.js").ensureAgentWorkspace;
     session: {
       resolveStorePath: typeof import("../../config/sessions/paths.js").resolveSessionStorePathCore;
+      createOrValidateOrdinarySession: (
+        params: Omit<RuntimeOrdinarySessionTarget, "created"> & { cwd?: string },
+      ) => Promise<RuntimeOrdinarySessionTarget>;
       createSessionEntry: (
         params: RuntimeCreateSessionEntryParams,
       ) => Promise<RuntimeCreateSessionEntryResult>;
