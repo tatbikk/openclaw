@@ -119,32 +119,35 @@ volume_has_state() {
   [ -e "$state_dir/openclaw.sqlite" ] || [ -d "$state_dir/npm/projects" ]
 }
 
-# A fresh volume gets the whole pre-installed plugin state. An existing volume is
-# never overwritten: report the exact one-time install instead of clobbering a
-# database and OAuth profile that are already in use.
-if ! plugin_installed codex || ! plugin_installed acpx || ! plugin_installed deepseek-provider; then
-  if volume_has_state; then
-    echo "OpenClaw state exists on this volume but a required plugin is missing." >&2
-    echo "Run these once in the Pod terminal, then restart the Pod:" >&2
-    if ! plugin_installed codex; then
-      echo "  runuser -u node -- openclaw plugins install --accept-capabilities npm:@openclaw/codex@${codex_plugin_version}" >&2
-    fi
-    if ! plugin_installed acpx; then
-      echo "  runuser -u node -- openclaw plugins install --accept-capabilities npm:@openclaw/acpx@${acpx_plugin_version}" >&2
-    fi
-    if ! plugin_installed deepseek-provider; then
-      echo "  runuser -u node -- openclaw plugins install --accept-capabilities npm:@openclaw/deepseek-provider@${deepseek_plugin_version}" >&2
-    fi
-    echo "Alternatively start from a fresh Network Volume to use the image's pre-installed plugins." >&2
-    exit 66
-  fi
-  cp -a /opt/openclaw-plugin-seed/. "$state_dir/"
-  chown -R node:node "$state_dir"
-fi
-
 run_openclaw() {
   runuser -u node -- node /app/openclaw.mjs "$@"
 }
+
+# A fresh volume gets the whole pre-installed plugin state in one copy. An
+# existing volume is never overwritten that way - the copy would land on a
+# database and OAuth profile already in use - so install just the plugins that
+# are actually missing.
+#
+# Printing the command for an operator to run instead was a dead end: this
+# platform offers no shell into a container that exits, so a single missing
+# plugin left the deployment crash-looping with no way to act on the advice. A
+# targeted install touches nothing else on the volume, so do it here.
+install_plugin() {
+  plugin_installed "$1" && return 0
+  echo "plugin $1 missing on this volume; installing $2@$3" >&2
+  run_openclaw plugins install --accept-capabilities "npm:$2@$3"
+}
+
+if ! plugin_installed codex || ! plugin_installed acpx || ! plugin_installed deepseek-provider; then
+  if volume_has_state; then
+    install_plugin codex @openclaw/codex "$codex_plugin_version"
+    install_plugin acpx @openclaw/acpx "$acpx_plugin_version"
+    install_plugin deepseek-provider @openclaw/deepseek-provider "$deepseek_plugin_version"
+  else
+    cp -a /opt/openclaw-plugin-seed/. "$state_dir/"
+    chown -R node:node "$state_dir"
+  fi
+fi
 
 # A roster that grew past one agent is refused from 2026.8.x on unless it says
 # who owns it, and that refusal lands on the very first `config set` below: the
