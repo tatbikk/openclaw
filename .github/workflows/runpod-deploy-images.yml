@@ -1,0 +1,138 @@
+name: RunPod Deploy Images
+
+# Builds the deployment images described in deploy/README.md and pushes them to
+# this repository owner's GHCR namespace. Run it from the Actions tab; nothing
+# here triggers automatically, and no secret beyond the built-in GITHUB_TOKEN is
+# required. This exists so the images can be produced without a working local
+# Docker daemon.
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Which image to build"
+        type: choice
+        default: both
+        options:
+          - both
+          - pod
+          - serverless
+      tag:
+        description: "Image tag"
+        type: string
+        default: 2026.7.2-beta.7
+  # A change to the deployment files is the whole reason to rebuild, so build on
+  # push too. Manual runs keep their chosen target and tag; a push builds both
+  # images and tags them `main` plus the immutable commit sha.
+  push:
+    branches: [main]
+    paths:
+      - "deploy/runpod/**"
+      - "deploy/runpod-serverless/**"
+      - ".github/workflows/runpod-deploy-images.yml"
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: runpod-deploy-images-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  build:
+    name: Build ${{ matrix.name }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - key: pod
+            name: openclaw-runpod
+            dockerfile: deploy/runpod/Dockerfile
+          - key: serverless
+            name: openclaw-serverless
+            dockerfile: deploy/runpod-serverless/Dockerfile
+    steps:
+      - name: Decide whether this image was requested
+        id: requested
+        env:
+          TARGET: ${{ inputs.target || 'both' }}
+          KEY: ${{ matrix.key }}
+        run: |
+          if [ "$TARGET" = "both" ] || [ "$TARGET" = "$KEY" ]; then
+            echo "build=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "build=false" >> "$GITHUB_OUTPUT"
+            echo "Skipping $KEY because target is $TARGET."
+          fi
+
+      - name: Checkout
+        if: steps.requested.outputs.build == 'true'
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+
+      # The owner segment must be lowercase for GHCR even when the GitHub
+      # account name contains capitals.
+      - name: Resolve image reference
+        if: steps.requested.outputs.build == 'true'
+        id: reference
+        env:
+          OWNER: ${{ github.repository_owner }}
+          NAME: ${{ matrix.name }}
+          TAG: ${{ inputs.tag || 'main' }}
+        run: |
+          owner=$(printf '%s' "$OWNER" | tr '[:upper:]' '[:lower:]')
+          echo "image=ghcr.io/${owner}/${NAME}" >> "$GITHUB_OUTPUT"
+          echo "ref=ghcr.io/${owner}/${NAME}:${TAG}" >> "$GITHUB_OUTPUT"
+
+      - name: Login to GHCR
+        if: steps.requested.outputs.build == 'true'
+        uses: docker/login-action@af1e73f918a031802d376d3c8bbc3fe56130a9b0 # v4.4.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      - name: Set up Buildx
+        if: steps.requested.outputs.build == 'true'
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4
+
+      # RunPod runs linux/amd64. GitHub's ubuntu-latest runner is already amd64,
+      # so this builds natively without emulation.
+      - name: Build and push
+        if: steps.requested.outputs.build == 'true'
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          platforms: linux/amd64
+          tags: |
+            ${{ steps.reference.outputs.ref }}
+            ${{ steps.reference.outputs.image }}:${{ github.sha }}
+          push: true
+          provenance: mode=max
+          sbom: true
+
+      - name: Summarize
+        if: steps.requested.outputs.build == 'true'
+        env:
+          REF: ${{ steps.reference.outputs.ref }}
+          IMAGE: ${{ steps.reference.outputs.image }}
+        run: |
+          {
+            echo "### ${IMAGE##*/}"
+            echo
+            echo "Paste this into the RunPod template's **Container image** field:"
+            echo
+            echo '```text'
+            echo "$REF"
+            echo '```'
+            echo
+            echo "The package is private on first publish. Either make it public under"
+            echo "**Packages > Package settings > Change visibility**, or add registry"
+            echo "credentials to RunPod, or RunPod cannot pull it."
+          } >> "$GITHUB_STEP_SUMMARY"
