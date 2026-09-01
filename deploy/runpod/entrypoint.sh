@@ -12,7 +12,6 @@ claude_home=${CLAUDE_CONFIG_DIR:-$runtime_root/claude}
 acpx_state_dir=$runtime_root/acpx
 code_workspace=${OPENCLAW_CODE_WORKSPACE:-/workspace/code}
 
-codex_plugin_version=${OPENCLAW_RUNPOD_CODEX_PLUGIN_VERSION:-2026.8.2}
 acpx_plugin_version=${OPENCLAW_RUNPOD_ACPX_PLUGIN_VERSION:-2026.8.2}
 deepseek_plugin_version=${OPENCLAW_RUNPOD_DEEPSEEK_PLUGIN_VERSION:-2026.8.2}
 
@@ -128,6 +127,11 @@ run_openclaw() {
 # database and OAuth profile already in use - so install just the plugins that
 # are actually missing.
 #
+# Codex is not in this set: the runtime image bundles it. A managed npm copy of
+# a bundled plugin is stripped by the Gateway on every boot, which changes the
+# plugin inventory mid-startup and costs readiness - so reinstalling it here
+# each boot would loop forever rather than converge.
+#
 # Printing the command for an operator to run instead was a dead end: this
 # platform offers no shell into a container that exits, so a single missing
 # plugin left the deployment crash-looping with no way to act on the advice. A
@@ -138,9 +142,8 @@ install_plugin() {
   run_openclaw plugins install --accept-capabilities "npm:$2@$3"
 }
 
-if ! plugin_installed codex || ! plugin_installed acpx || ! plugin_installed deepseek-provider; then
+if ! plugin_installed acpx || ! plugin_installed deepseek-provider; then
   if volume_has_state; then
-    install_plugin codex @openclaw/codex "$codex_plugin_version"
     install_plugin acpx @openclaw/acpx "$acpx_plugin_version"
     install_plugin deepseek-provider @openclaw/deepseek-provider "$deepseek_plugin_version"
   else

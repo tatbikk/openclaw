@@ -1,13 +1,16 @@
 ARG OPENCLAW_IMAGE="ghcr.io/openclaw/openclaw:2026.8.2"
-ARG CODEX_PLUGIN_VERSION="2026.8.2"
 ARG ACPX_PLUGIN_VERSION="2026.8.2"
 ARG DEEPSEEK_PLUGIN_VERSION="2026.8.2"
 
-# Codex and ACPX are official external plugins, so the public OpenClaw runtime
-# image does not bundle them. Install the exact compatible releases during the
-# image build; the final container never reaches npm during startup.
+# ACPX and DeepSeek are official external plugins, so the public OpenClaw
+# runtime image does not bundle them. Install the exact compatible releases
+# during the image build; the final container never reaches npm during startup.
 #
-# codex    -> native app-server runtime for OpenClaw's own agent turns (path 2).
+# Codex is deliberately absent: this runtime image bundles it, and a managed npm
+# copy of a bundled plugin shadows it. The Gateway strips that copy on every
+# boot, then refuses readiness because the plugin inventory changed mid-startup -
+# so installing it here would crash-loop the container rather than equip it.
+#
 # acpx     -> ACP harness runtime that launches real Codex CLI and Claude Code
 #             processes, used by the relay path (path 3) and by agent-driven
 #             harness spawns. Its pinned dependencies already contain both ACP
@@ -17,7 +20,6 @@ ARG DEEPSEEK_PLUGIN_VERSION="2026.8.2"
 #             that is not installed contributes no models, so the bootstrap model
 #             is rejected as unknown and the boot dies under `set -e`.
 FROM ${OPENCLAW_IMAGE} AS plugin-seed
-ARG CODEX_PLUGIN_VERSION
 ARG ACPX_PLUGIN_VERSION
 ARG DEEPSEEK_PLUGIN_VERSION
 USER root
@@ -29,14 +31,12 @@ ENV OPENCLAW_STATE_DIR=/workspace/openclaw/state \
 # capabilities refuse to install non-interactively without explicit consent, and
 # an image build has no operator to prompt. The three plugins are pinned above,
 # so the consent is scoped to exactly the releases this image ships.
-RUN node /app/openclaw.mjs plugins install --accept-capabilities "npm:@openclaw/codex@${CODEX_PLUGIN_VERSION}" \
-    && node /app/openclaw.mjs plugins install --accept-capabilities "npm:@openclaw/acpx@${ACPX_PLUGIN_VERSION}" \
+RUN node /app/openclaw.mjs plugins install --accept-capabilities "npm:@openclaw/acpx@${ACPX_PLUGIN_VERSION}" \
     && node /app/openclaw.mjs plugins install --accept-capabilities "npm:@openclaw/deepseek-provider@${DEEPSEEK_PLUGIN_VERSION}" \
     && cp -a /workspace/openclaw/state/. /opt/openclaw-plugin-seed/
 
 FROM ${OPENCLAW_IMAGE}
 
-ARG CODEX_PLUGIN_VERSION
 ARG ACPX_PLUGIN_VERSION
 ARG DEEPSEEK_PLUGIN_VERSION
 
@@ -69,8 +69,7 @@ ENV OPENCLAW_HOME=/workspace/openclaw/home \
     NODE_ENV=production
 
 # The pinned plugin versions the startup wrapper expects on the mounted volume.
-ENV OPENCLAW_RUNPOD_CODEX_PLUGIN_VERSION=${CODEX_PLUGIN_VERSION} \
-    OPENCLAW_RUNPOD_ACPX_PLUGIN_VERSION=${ACPX_PLUGIN_VERSION} \
+ENV OPENCLAW_RUNPOD_ACPX_PLUGIN_VERSION=${ACPX_PLUGIN_VERSION} \
     OPENCLAW_RUNPOD_DEEPSEEK_PLUGIN_VERSION=${DEEPSEEK_PLUGIN_VERSION}
 
 # The ACPX startup probe spawns a real harness before the Gateway reports ready.
