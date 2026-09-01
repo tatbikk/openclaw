@@ -11,9 +11,9 @@ claude_home=${CLAUDE_CONFIG_DIR:-$runtime_root/claude}
 acpx_state_dir=$runtime_root/acpx
 code_workspace=${OPENCLAW_CODE_WORKSPACE:-/workspace/code}
 
-codex_plugin_version=${OPENCLAW_RUNPOD_CODEX_PLUGIN_VERSION:-2026.7.2-beta.7}
-acpx_plugin_version=${OPENCLAW_RUNPOD_ACPX_PLUGIN_VERSION:-2026.7.2-beta.7}
-deepseek_plugin_version=${OPENCLAW_RUNPOD_DEEPSEEK_PLUGIN_VERSION:-2026.7.2-beta.7}
+codex_plugin_version=${OPENCLAW_RUNPOD_CODEX_PLUGIN_VERSION:-2026.8.2}
+acpx_plugin_version=${OPENCLAW_RUNPOD_ACPX_PLUGIN_VERSION:-2026.8.2}
+deepseek_plugin_version=${OPENCLAW_RUNPOD_DEEPSEEK_PLUGIN_VERSION:-2026.8.2}
 
 # ACP harness sessions have no TTY, so a harness permission prompt cannot be
 # answered. approve-all lets the relay and coding paths actually write files and

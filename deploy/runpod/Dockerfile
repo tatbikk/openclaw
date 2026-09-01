@@ -1,7 +1,7 @@
-ARG OPENCLAW_IMAGE="ghcr.io/openclaw/openclaw:2026.7.2-beta.7@sha256:d41807ff1e5c925ff75e71ed2b755cdea59da1431d1f4fde5051a16a3337e9ce"
-ARG CODEX_PLUGIN_VERSION="2026.7.2-beta.7"
-ARG ACPX_PLUGIN_VERSION="2026.7.2-beta.7"
-ARG DEEPSEEK_PLUGIN_VERSION="2026.7.2-beta.7"
+ARG OPENCLAW_IMAGE="ghcr.io/openclaw/openclaw:2026.8.2"
+ARG CODEX_PLUGIN_VERSION="2026.8.2"
+ARG ACPX_PLUGIN_VERSION="2026.8.2"
+ARG DEEPSEEK_PLUGIN_VERSION="2026.8.2"
 
 # Codex and ACPX are official external plugins, so the public OpenClaw runtime
 # image does not bundle them. Install the exact compatible releases during the
