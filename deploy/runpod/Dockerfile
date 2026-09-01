@@ -25,9 +25,13 @@ RUN install -d -m 0700 -o node -g node /workspace/openclaw/state /opt/openclaw-p
 USER node
 ENV OPENCLAW_STATE_DIR=/workspace/openclaw/state \
     OPENCLAW_CONFIG_PATH=/workspace/openclaw/state/openclaw.json
-RUN node /app/openclaw.mjs plugins install "npm:@openclaw/codex@${CODEX_PLUGIN_VERSION}" \
-    && node /app/openclaw.mjs plugins install "npm:@openclaw/acpx@${ACPX_PLUGIN_VERSION}" \
-    && node /app/openclaw.mjs plugins install "npm:@openclaw/deepseek-provider@${DEEPSEEK_PLUGIN_VERSION}" \
+# --accept-capabilities is required from 2026.8.x onward: plugins declaring
+# capabilities refuse to install non-interactively without explicit consent, and
+# an image build has no operator to prompt. The three plugins are pinned above,
+# so the consent is scoped to exactly the releases this image ships.
+RUN node /app/openclaw.mjs plugins install --accept-capabilities "npm:@openclaw/codex@${CODEX_PLUGIN_VERSION}" \
+    && node /app/openclaw.mjs plugins install --accept-capabilities "npm:@openclaw/acpx@${ACPX_PLUGIN_VERSION}" \
+    && node /app/openclaw.mjs plugins install --accept-capabilities "npm:@openclaw/deepseek-provider@${DEEPSEEK_PLUGIN_VERSION}" \
     && cp -a /workspace/openclaw/state/. /opt/openclaw-plugin-seed/
 
 FROM ${OPENCLAW_IMAGE}

@@ -126,13 +126,13 @@ if ! plugin_installed codex || ! plugin_installed acpx || ! plugin_installed dee
     echo "OpenClaw state exists on this volume but a required plugin is missing." >&2
     echo "Run these once in the Pod terminal, then restart the Pod:" >&2
     if ! plugin_installed codex; then
-      echo "  runuser -u node -- openclaw plugins install npm:@openclaw/codex@${codex_plugin_version}" >&2
+      echo "  runuser -u node -- openclaw plugins install --accept-capabilities npm:@openclaw/codex@${codex_plugin_version}" >&2
     fi
     if ! plugin_installed acpx; then
-      echo "  runuser -u node -- openclaw plugins install npm:@openclaw/acpx@${acpx_plugin_version}" >&2
+      echo "  runuser -u node -- openclaw plugins install --accept-capabilities npm:@openclaw/acpx@${acpx_plugin_version}" >&2
     fi
     if ! plugin_installed deepseek-provider; then
-      echo "  runuser -u node -- openclaw plugins install npm:@openclaw/deepseek-provider@${deepseek_plugin_version}" >&2
+      echo "  runuser -u node -- openclaw plugins install --accept-capabilities npm:@openclaw/deepseek-provider@${deepseek_plugin_version}" >&2
     fi
     echo "Alternatively start from a fresh Network Volume to use the image's pre-installed plugins." >&2
     exit 66
