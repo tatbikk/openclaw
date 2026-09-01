@@ -205,6 +205,15 @@ else
   echo "roster check: no config at $config_path" >&2
 fi
 
+# Doctor is the only owner of state repairs that must happen while the Gateway
+# is stopped - a session row in an older canonical shape, a legacy store left by
+# an upgrade. The Gateway itself can only report those and carry on degraded,
+# and its advice to "stop the Gateway and run openclaw doctor --fix" assumes a
+# shell this platform does not offer. Boot is the one moment that shell exists,
+# so spend it here. Repeat runs are no-ops; a failure is reported and never
+# blocks the boot, since a degraded Gateway still beats no Gateway.
+run_openclaw doctor --fix || echo "warning: doctor --fix did not complete; continuing to start the Gateway" >&2
+
 # The public RunPod proxy needs explicit Gateway auth and an exact browser origin.
 # Reapply only this deployment-owned boundary on boot so a replacement Pod ID works.
 run_openclaw config set --batch-json "$(
