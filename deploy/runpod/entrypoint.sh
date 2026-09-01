@@ -168,23 +168,25 @@ if [ -f "$config_path" ]; then
     const cfg = JSON.parse(fs.readFileSync(configPath, "utf8"));
     const agents = (cfg.agents ??= {});
     const entries = agents.entries ?? {};
-    const list = Array.isArray(agents.list) ? agents.list : [];
-    const ids = [
-      ...Object.keys(entries),
-      ...list.map((agent) => agent?.id ?? agent?.agentId ?? agent?.name).filter(Boolean),
-    ];
-    const owns = (agent) => agent?.default === true;
-    const declared = Boolean(agents.ownership) || Object.values(entries).some(owns) || list.some(owns);
+    const ids = Object.keys(entries);
+    const marked = ids.filter((id) => entries[id]?.default === true);
     console.error(
-      "roster check: keys=" + Object.keys(agents).join(",") +
-        " entries=" + Object.keys(entries).length +
-        " list=" + list.length +
+      "roster check: entries=" + ids.length +
+        " marked=" + marked.length +
         " ownership=" + agents.ownership,
     );
-    if (ids.length < 2 || declared) {
+    if (ids.length < 2 || agents.ownership) {
       process.exit(0);
     }
-    const owner = ids.includes("main") ? "main" : ids[0];
+    // One marker is the legacy way to name the owner; several name none of
+    // them, which is how this volume got stuck - the roster looked declared to
+    // a lenient reader and undeclared to the one that matters. Take the sole
+    // marker as the owner when there is exactly one, and drop every marker
+    // afterwards so the current shape is the only one left to read.
+    const owner = marked.length === 1 ? marked[0] : ids.includes("main") ? "main" : ids[0];
+    for (const id of marked) {
+      delete entries[id].default;
+    }
     agents.ownership = "explicit";
     const bindings = (cfg.bindings ??= []);
     if (!bindings.some((binding) => binding?.match?.channel === "telegram")) {
