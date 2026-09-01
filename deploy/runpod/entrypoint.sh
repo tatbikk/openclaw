@@ -109,9 +109,17 @@ if [ -z "${CLAUDE_CODE_OAUTH_TOKEN:-}" ] && [ -z "${ANTHROPIC_API_KEY:-}" ]; the
   echo "warning: neither CLAUDE_CODE_OAUTH_TOKEN nor ANTHROPIC_API_KEY is set; the claude ACP harness will fail until one is provided. Codex paths are unaffected." >&2
 fi
 
-plugin_installed() {
+# Presence is not enough. A plugin left on the volume by an older image is
+# compiled against the Plugin SDK of its own release, so against this runtime it
+# fails to load on a missing export - and a provider that cannot load contributes
+# no models at all, silently. Match the pinned version, not just the file.
+plugin_at_version() {
   found=$(find "$state_dir/npm/projects" -path "*/node_modules/@openclaw/$1/package.json" -print -quit 2>/dev/null || true)
-  [ -n "$found" ]
+  [ -n "$found" ] || return 1
+  node -e 'const fs = require("node:fs");
+    const [manifest, wanted] = process.argv.slice(1);
+    process.exit(JSON.parse(fs.readFileSync(manifest, "utf8")).version === wanted ? 0 : 1);
+  ' "$found" "$2"
 }
 
 volume_has_state() {
@@ -137,19 +145,17 @@ run_openclaw() {
 # plugin left the deployment crash-looping with no way to act on the advice. A
 # targeted install touches nothing else on the volume, so do it here.
 install_plugin() {
-  plugin_installed "$1" && return 0
-  echo "plugin $1 missing on this volume; installing $2@$3" >&2
+  plugin_at_version "$1" "$3" && return 0
+  echo "plugin $1 is absent or not at $3 on this volume; installing $2@$3" >&2
   run_openclaw plugins install --accept-capabilities "npm:$2@$3"
 }
 
-if ! plugin_installed acpx || ! plugin_installed deepseek-provider; then
-  if volume_has_state; then
-    install_plugin acpx @openclaw/acpx "$acpx_plugin_version"
-    install_plugin deepseek-provider @openclaw/deepseek-provider "$deepseek_plugin_version"
-  else
-    cp -a /opt/openclaw-plugin-seed/. "$state_dir/"
-    chown -R node:node "$state_dir"
-  fi
+if volume_has_state; then
+  install_plugin acpx @openclaw/acpx "$acpx_plugin_version"
+  install_plugin deepseek-provider @openclaw/deepseek-provider "$deepseek_plugin_version"
+else
+  cp -a /opt/openclaw-plugin-seed/. "$state_dir/"
+  chown -R node:node "$state_dir"
 fi
 
 # A roster that grew past one agent is refused from 2026.8.x on unless it says
