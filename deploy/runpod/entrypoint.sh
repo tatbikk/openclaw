@@ -3,6 +3,7 @@ set -eu
 
 runtime_root=/workspace/openclaw
 state_dir=${OPENCLAW_STATE_DIR:-$runtime_root/state}
+config_path=${OPENCLAW_CONFIG_PATH:-$state_dir/openclaw.json}
 config_home=${XDG_CONFIG_HOME:-$runtime_root/config}
 openclaw_home=${OPENCLAW_HOME:-$runtime_root/home}
 workspace_dir=${OPENCLAW_WORKSPACE_DIR:-$state_dir/workspace}
@@ -144,6 +145,39 @@ fi
 run_openclaw() {
   runuser -u node -- node /app/openclaw.mjs "$@"
 }
+
+# A roster that grew past one agent is refused from 2026.8.x on unless it says
+# who owns it, and that refusal lands on the very first `config set` below: the
+# Gateway never starts, and the volume cannot be repaired from a shell the crash
+# loop leaves no time to open.
+#
+# Stamping ownership alone is not the repair. An explicit fleet has no implicit
+# default, so a channel with no matching binding fails closed and the bot goes
+# quiet instead of crashing - the worse outcome of the two. Stamp the marker and
+# the channel binding together, and leave a roster that already declares an
+# owner in either shape untouched.
+if [ -f "$config_path" ]; then
+  runuser -u node -- node -e '
+    const fs = require("node:fs");
+    const configPath = process.argv[1];
+    const cfg = JSON.parse(fs.readFileSync(configPath, "utf8"));
+    const agents = (cfg.agents ??= {});
+    const entries = agents.entries ?? {};
+    const ids = Object.keys(entries);
+    const declared = agents.ownership || ids.some((id) => entries[id]?.default === true);
+    if (ids.length < 2 || declared) {
+      process.exit(0);
+    }
+    const owner = ids.includes("main") ? "main" : ids[0];
+    agents.ownership = "explicit";
+    const bindings = (cfg.bindings ??= []);
+    if (!bindings.some((binding) => binding?.match?.channel === "telegram")) {
+      bindings.push({ agentId: owner, match: { channel: "telegram", accountId: "*" } });
+    }
+    fs.writeFileSync(configPath, JSON.stringify(cfg, null, 2) + "\n");
+    console.error("stamped agents.ownership=explicit and bound telegram to " + owner);
+  ' "$config_path"
+fi
 
 # The public RunPod proxy needs explicit Gateway auth and an exact browser origin.
 # Reapply only this deployment-owned boundary on boot so a replacement Pod ID works.
