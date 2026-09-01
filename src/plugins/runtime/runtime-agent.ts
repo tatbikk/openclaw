@@ -19,6 +19,7 @@ import { getRuntimeConfig } from "../../config/config.js";
 import { resolveSessionWorkStartError } from "../../config/sessions/lifecycle.js";
 import { resolveSessionStorePathCore } from "../../config/sessions/paths.js";
 import {
+  createOrValidateOrdinarySession as createOrValidateAccessorOrdinarySession,
   deleteSessionEntryLifecycle,
   listSessionEntriesCore as listAccessorSessionEntries,
   listSessionEntriesReadOnly as listAccessorSessionEntriesReadOnly,
@@ -172,6 +173,18 @@ async function upsertSessionEntry(params: RuntimeUpsertSessionEntryParams): Prom
   // Maintainer note: this compatibility helper has full-entry replacement
   // semantics, so removed fields must not survive as merge leftovers.
   await replaceSessionEntry(toSessionAccessScope(params), params.entry);
+}
+
+async function createOrValidateOrdinarySession(
+  params: Parameters<PluginRuntime["agent"]["session"]["createOrValidateOrdinarySession"]>[0],
+): Promise<
+  Awaited<ReturnType<PluginRuntime["agent"]["session"]["createOrValidateOrdinarySession"]>>
+> {
+  const ownerPluginId = getPluginRuntimeGatewayRequestScope()?.pluginId;
+  if (!ownerPluginId) {
+    throw new Error("ordinary session creation requires an owning plugin runtime scope");
+  }
+  return await createOrValidateAccessorOrdinarySession({ ...params, ownerPluginId });
 }
 
 async function createSessionEntry(
@@ -676,6 +689,7 @@ export function createRuntimeAgent(): PluginRuntime["agent"] {
   );
   defineCachedValue(agentRuntime, "session", () => ({
     resolveStorePath: resolveSessionStorePathCore,
+    createOrValidateOrdinarySession,
     createSessionEntry,
     getSessionEntry,
     listSessionEntries,

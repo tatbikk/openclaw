@@ -88,6 +88,13 @@ type RuntimeCreateSessionEntryResult = {
   sessionId: string;
   entry: RuntimeSessionEntry;
 };
+type RuntimeOrdinarySessionTarget = {
+  agentId: string;
+  created: boolean;
+  sessionId: string;
+  sessionKey: string;
+  storePath: string;
+};
 type RuntimeCreateSessionEntryFinalPatch = {
   pluginExtensions: RuntimeSessionPluginExtensions;
 };
@@ -371,6 +378,9 @@ export type PluginRuntimeCore = {
     ensureAgentWorkspace: typeof import("../../agents/workspace.js").ensureAgentWorkspace;
     session: {
       resolveStorePath: typeof import("../../config/sessions/paths.js").resolveSessionStorePathCore;
+      createOrValidateOrdinarySession: (
+        params: Omit<RuntimeOrdinarySessionTarget, "created"> & { cwd?: string },
+      ) => Promise<RuntimeOrdinarySessionTarget>;
       createSessionEntry: (
         params: RuntimeCreateSessionEntryParams,
       ) => Promise<RuntimeCreateSessionEntryResult>;

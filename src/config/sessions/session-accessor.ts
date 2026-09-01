@@ -184,6 +184,12 @@ export {
   updateSessionLastRoute,
 } from "./session-accessor.entry-mutation.js";
 export {
+  assertOrdinaryPluginSessionNamespace,
+  createOrValidateOrdinarySession,
+  type CreateOrValidateOrdinarySessionParams,
+  type OrdinarySessionTarget,
+} from "./session-accessor.sqlite-ordinary-create.js";
+export {
   recoverSessionEntryFromRestartTombstone,
   type RestartTombstoneRecoveryResult,
 } from "./session-accessor.sqlite-recovery.js";

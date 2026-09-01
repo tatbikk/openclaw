@@ -576,6 +576,10 @@ export function createPluginRuntimeMock(overrides: DeepPartial<PluginRuntime> = 
         resolveStorePath: vi.fn<PluginRuntime["agent"]["session"]["resolveStorePath"]>(
           () => "/tmp/agent-sessions.json",
         ),
+        createOrValidateOrdinarySession: vi.fn(async (params) => ({
+          ...params,
+          created: true,
+        })) as PluginRuntime["agent"]["session"]["createOrValidateOrdinarySession"],
         createSessionEntry: vi.fn(
           async (
             params: Parameters<PluginRuntime["agent"]["session"]["createSessionEntry"]>[0],

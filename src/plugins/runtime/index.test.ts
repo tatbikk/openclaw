@@ -1,4 +1,7 @@
 // Plugin runtime index tests cover runtime entrypoint exports and registry setup.
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_MODEL, DEFAULT_PROVIDER } from "../../agents/defaults.js";
 import {
@@ -6,6 +9,7 @@ import {
   setRuntimeConfigSnapshot,
   type OpenClawConfig,
 } from "../../config/config.js";
+import { loadSessionEntry } from "../../config/sessions/session-accessor.js";
 import { onAgentEvent } from "../../infra/agent-events.js";
 import { requestHeartbeat, setHeartbeatWakeHandler } from "../../infra/heartbeat-wake.js";
 import * as execModule from "../../process/exec.js";
@@ -34,6 +38,7 @@ vi.mock("./runtime-model-auth.runtime.js", () => ({
 }));
 vi.mock("../../agents/sandbox/context.js", () => sandboxContextMocks);
 
+import { withPluginRuntimePluginIdScope } from "./gateway-request-scope.js";
 import { createPluginRuntime } from "./index.js";
 
 function createCommandResult() {
@@ -390,6 +395,7 @@ describe("plugin runtime command execution", () => {
           "resolveAgentDir",
         ]);
         expectFunctionKeys(runtime.agent.session as Record<string, unknown>, [
+          "createOrValidateOrdinarySession",
           "createSessionEntry",
           "getSessionEntry",
           "listSessionEntries",
@@ -507,6 +513,35 @@ describe("plugin runtime command execution", () => {
   it("keeps subagent unavailable by default", () => {
     const runtime = createPluginRuntime();
     expectGatewaySubagentRunFailure(runtime, { sessionKey: "s-1", message: "hello" });
+  });
+
+  it("binds ordinary session ownership to the active plugin scope", async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "plugin-runtime-ordinary-session-"));
+    const params = {
+      agentId: "main",
+      sessionId: "ordinary-session",
+      sessionKey: "agent:main:plugin:ordinary-owner:thread",
+      storePath: path.join(dir, "openclaw-agent.sqlite"),
+    };
+    const runtime = createPluginRuntime();
+
+    try {
+      await expect(runtime.agent.session.createOrValidateOrdinarySession(params)).rejects.toThrow(
+        "requires an owning plugin runtime scope",
+      );
+
+      await expect(
+        withPluginRuntimePluginIdScope("ordinary-owner", () =>
+          runtime.agent.session.createOrValidateOrdinarySession(params),
+        ),
+      ).resolves.toEqual({ ...params, created: true });
+      expect(loadSessionEntry(params)).toMatchObject({
+        pluginOwnerId: "ordinary-owner",
+        sessionId: params.sessionId,
+      });
+    } finally {
+      await fs.rm(dir, { force: true, recursive: true });
+    }
   });
 
   it("exposes a node duplex capability even when Gateway access is unavailable", () => {

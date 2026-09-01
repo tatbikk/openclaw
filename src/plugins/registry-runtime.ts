@@ -346,6 +346,18 @@ export function createPluginRuntimeResolver(state: PluginRegistryState) {
             resolveStorePath: session.resolveStorePath,
             getSessionEntry: session.getSessionEntry,
             listSessionEntries: session.listSessionEntries,
+            createOrValidateOrdinarySession: async (params) => {
+              const { assertOrdinaryPluginSessionNamespace } =
+                await import("../config/sessions/session-accessor.sqlite-ordinary-create.js");
+              assertOrdinaryPluginSessionNamespace({
+                agentId: params.agentId,
+                ownerPluginId: pluginId,
+                sessionKey: params.sessionKey,
+              });
+              return await runWithPluginScope(() =>
+                session.createOrValidateOrdinarySession(params),
+              );
+            },
             createSessionEntry: async (params) => {
               const { assertOwnedHarness, assertReservedSessionKeyOwned } =
                 await loadSessionOwnership();
