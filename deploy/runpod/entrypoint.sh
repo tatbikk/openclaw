@@ -156,6 +156,11 @@ run_openclaw() {
 # quiet instead of crashing - the worse outcome of the two. Stamp the marker and
 # the channel binding together, and leave a roster that already declares an
 # owner in either shape untouched.
+#
+# The roster is read from both shapes it can be on disk in: the current
+# `entries` map, and the older `list` array a volume written before the rename
+# still carries. Report what was found either way - a silent skip here reads
+# exactly like a boot that never ran this at all.
 if [ -f "$config_path" ]; then
   runuser -u node -- node -e '
     const fs = require("node:fs");
@@ -163,8 +168,19 @@ if [ -f "$config_path" ]; then
     const cfg = JSON.parse(fs.readFileSync(configPath, "utf8"));
     const agents = (cfg.agents ??= {});
     const entries = agents.entries ?? {};
-    const ids = Object.keys(entries);
-    const declared = agents.ownership || ids.some((id) => entries[id]?.default === true);
+    const list = Array.isArray(agents.list) ? agents.list : [];
+    const ids = [
+      ...Object.keys(entries),
+      ...list.map((agent) => agent?.id ?? agent?.agentId ?? agent?.name).filter(Boolean),
+    ];
+    const owns = (agent) => agent?.default === true;
+    const declared = Boolean(agents.ownership) || Object.values(entries).some(owns) || list.some(owns);
+    console.error(
+      "roster check: keys=" + Object.keys(agents).join(",") +
+        " entries=" + Object.keys(entries).length +
+        " list=" + list.length +
+        " ownership=" + agents.ownership,
+    );
     if (ids.length < 2 || declared) {
       process.exit(0);
     }
@@ -177,6 +193,8 @@ if [ -f "$config_path" ]; then
     fs.writeFileSync(configPath, JSON.stringify(cfg, null, 2) + "\n");
     console.error("stamped agents.ownership=explicit and bound telegram to " + owner);
   ' "$config_path"
+else
+  echo "roster check: no config at $config_path" >&2
 fi
 
 # The public RunPod proxy needs explicit Gateway auth and an exact browser origin.
