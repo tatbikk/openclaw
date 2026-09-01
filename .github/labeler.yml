@@ -307,6 +307,7 @@
           - "docker-compose.yml"
           - ".dockerignore"
           - "deploy/fly.private.toml"
+          - "deploy/runpod/**"
           - "scripts/docker/setup.sh"
           - "scripts/docker/sandbox/Dockerfile*"
           - "scripts/podman/setup.sh"

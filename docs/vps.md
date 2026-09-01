@@ -27,6 +27,7 @@ tuning that applies everywhere.
   <Card title="Oracle Cloud" href="/install/oracle">Always Free ARM tier</Card>
   <Card title="Railway" href="/install/railway">One-click, browser setup</Card>
   <Card title="Raspberry Pi" href="/install/raspberry-pi">ARM self-hosted</Card>
+  <Card title="RunPod" href="/install/runpod">Pods with a network volume</Card>
 </CardGroup>
 
 **AWS (EC2 / Lightsail / free tier)** also works well.
