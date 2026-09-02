@@ -182,30 +182,53 @@ if [ -f "$config_path" ]; then
     const entries = agents.entries ?? {};
     const ids = Object.keys(entries);
     const marked = ids.filter((id) => entries[id]?.default === true);
-    console.error(
-      "roster check: entries=" + ids.length +
-        " marked=" + marked.length +
-        " ownership=" + agents.ownership,
-    );
-    if (ids.length < 2 || agents.ownership) {
-      process.exit(0);
-    }
+    const bindings = Array.isArray(cfg.bindings) ? cfg.bindings : [];
+    const telegramBinding = bindings.find((binding) => binding?.match?.channel === "telegram");
     // One marker is the legacy way to name the owner; several name none of
     // them, which is how this volume got stuck - the roster looked declared to
     // a lenient reader and undeclared to the one that matters. Take the sole
     // marker as the owner when there is exactly one, and drop every marker
     // afterwards so the current shape is the only one left to read.
-    const owner = marked.length === 1 ? marked[0] : ids.includes("main") ? "main" : ids[0];
-    for (const id of marked) {
-      delete entries[id].default;
+    let owner = telegramBinding?.agentId ?? (ids.includes("main") ? "main" : ids[0]);
+    let changed = false;
+    if (ids.length >= 2 && !agents.ownership) {
+      if (marked.length === 1) {
+        owner = marked[0];
+      }
+      for (const id of marked) {
+        delete entries[id].default;
+      }
+      agents.ownership = "explicit";
+      changed = true;
     }
-    agents.ownership = "explicit";
-    const bindings = (cfg.bindings ??= []);
-    if (!bindings.some((binding) => binding?.match?.channel === "telegram")) {
+    if (agents.ownership && !telegramBinding && owner) {
       bindings.push({ agentId: owner, match: { channel: "telegram", accountId: "*" } });
+      cfg.bindings = bindings;
+      changed = true;
     }
-    fs.writeFileSync(configPath, JSON.stringify(cfg, null, 2) + "\n");
-    console.error("stamped agents.ownership=explicit and bound telegram to " + owner);
+    // Default the owner to an ACP harness session. Codex then drives the turn
+    // over the operator subscription and picks its own model, so OpenClaw never
+    // names one - which is the whole failure this avoids: a model id written
+    // here has to exist in that account catalog, and a mismatch both kills the
+    // reply and cools down the credential that was never at fault.
+    if (entries[owner] && !entries[owner].runtime) {
+      entries[owner].runtime = {
+        type: "acp",
+        acp: { agent: "codex", backend: "acpx", mode: "persistent" },
+      };
+      changed = true;
+    }
+    console.error(
+      "roster check: entries=" + ids.length +
+        " marked=" + marked.length +
+        " ownership=" + agents.ownership +
+        " owner=" + owner +
+        " runtime=" + (entries[owner]?.runtime?.type ?? "embedded") +
+        " changed=" + changed,
+    );
+    if (changed) {
+      fs.writeFileSync(configPath, JSON.stringify(cfg, null, 2) + "\n");
+    }
   ' "$config_path"
 else
   echo "roster check: no config at $config_path" >&2
