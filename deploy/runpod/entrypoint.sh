@@ -144,10 +144,16 @@ run_openclaw() {
 # platform offers no shell into a container that exits, so a single missing
 # plugin left the deployment crash-looping with no way to act on the advice. A
 # targeted install touches nothing else on the volume, so do it here.
+# --force is what makes this a repair rather than a request: a plain install
+# refuses outright when a copy of the package is already on the volume, which is
+# precisely the state being repaired. A failure only warns, because a plugin the
+# Gateway can start without must never cost the whole boot - there is no shell
+# here to recover a container that keeps exiting.
 install_plugin() {
   plugin_at_version "$1" "$3" && return 0
   echo "plugin $1 is absent or not at $3 on this volume; installing $2@$3" >&2
-  run_openclaw plugins install --accept-capabilities "npm:$2@$3"
+  run_openclaw plugins install --accept-capabilities --force "npm:$2@$3" ||
+    echo "warning: could not install $2@$3; starting without it" >&2
 }
 
 if volume_has_state; then
