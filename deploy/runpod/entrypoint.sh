@@ -358,11 +358,20 @@ fi
 # A plain API key needs no browser, so a Pod with DEEPSEEK_API_KEY has a working
 # brain on its very first boot. That agent can then drive the interactive
 # ChatGPT and Codex logins over Telegram instead of requiring a Pod terminal.
-# Without the key, fall back to the subscription model, which needs a login first.
+#
+# Without that key there is deliberately no fallback constant. A model id named
+# here has to exist in the operator account's own catalog, and naming one that
+# does not is worse than naming none: Codex answers 400 "The '<id>' model is not
+# supported when using Codex with a ChatGPT account", OpenClaw records that
+# rejection against the auth profile, and the cooldown that follows fails every
+# later turn on every agent sharing the credential - in milliseconds, with the
+# reply simply absent. Codex chooses correctly when nothing is named: its
+# models-manager preserves a provided model and otherwise takes the catalog
+# entry flagged is_default (codex-rs/models-manager/src/manager.rs:159,:597).
 if [ -n "${DEEPSEEK_API_KEY:-}" ]; then
   bootstrap_model=deepseek/deepseek-v4-pro
 else
-  bootstrap_model=openai/gpt-5.6-sol
+  bootstrap_model=
 fi
 
 # Choose defaults only when the operator has not already made an explicit
@@ -371,13 +380,79 @@ fi
 # Telegram transport, and the relay path all work without one. Never let an
 # unusable bootstrap model crash-loop the container — warn and carry on so the
 # operator can fix the model over chat instead of from the logs alone.
-if ! run_openclaw config get agents.defaults.model.primary >/dev/null 2>&1; then
+if [ -n "$bootstrap_model" ] && ! run_openclaw config get agents.defaults.model.primary >/dev/null 2>&1; then
   if ! run_openclaw config set agents.defaults.model.primary "$bootstrap_model" >/dev/null 2>&1; then
     echo "warning: could not set default model $bootstrap_model. The Gateway and Telegram still start; set agents.defaults.model.primary to a model this build knows." >&2
   fi
 fi
-if ! run_openclaw config get 'agents.defaults.models["openai/gpt-5.6-sol"].agentRuntime.id' >/dev/null 2>&1; then
-  run_openclaw config set 'agents.defaults.models["openai/gpt-5.6-sol"].agentRuntime.id' codex >/dev/null
+
+# Refresh before reading: the stored catalog is what a stale selection is judged
+# against, and an account's entitlements change without this deployment knowing.
+run_openclaw models refresh >/dev/null 2>&1 ||
+  echo "warning: could not refresh the model catalog; judging selections against the stored one" >&2
+openai_catalog=$(run_openclaw models list --provider openai --all --plain 2>/dev/null || true)
+
+# Retire OpenAI selections the account cannot serve, wherever they are written.
+# This is the repair the paragraph above only prevents: the bad id is already on
+# the volume from an earlier boot, and it survives every redeploy because config
+# is authoritative. Leaving it costs the credential, not just the turn. An empty
+# catalog proves nothing, so that case changes nothing.
+if [ -f "$config_path" ]; then
+  OPENCLAW_OPENAI_CATALOG="$openai_catalog" runuser -u node -- node -e '
+    const fs = require("node:fs");
+    const configPath = process.argv[1];
+    const catalog = process.env.OPENCLAW_OPENAI_CATALOG ?? "";
+    const known = new Set(
+      catalog
+        .split(/\s+/)
+        .filter(Boolean)
+        .map((token) => (token.includes("/") ? token.slice(token.lastIndexOf("/") + 1) : token)),
+    );
+    console.error("openai catalog: " + (known.size > 0 ? [...known].join(",") : "<empty>"));
+    const cfg = JSON.parse(fs.readFileSync(configPath, "utf8"));
+    const entries = cfg.agents?.entries ?? {};
+    // Report the whole roster: a per-agent model outlives any default, so a
+    // report that only covers the default reads as clean while an agent is dead.
+    for (const [id, entry] of Object.entries(entries)) {
+      console.error(
+        "agent " + id +
+          ": runtime=" + (entry?.runtime?.type ?? "embedded") +
+          " model=" + (entry?.model?.primary ?? entry?.model ?? "<inherited>"),
+      );
+    }
+    if (known.size === 0) {
+      console.error("model check: catalog unavailable; leaving every selection in place");
+      process.exit(0);
+    }
+    const holders = [cfg.agents?.defaults, ...Object.values(entries)];
+    let removed = 0;
+    for (const holder of holders) {
+      const model = holder?.model;
+      const ref = typeof model === "string" ? model : model?.primary;
+      if (typeof ref !== "string" || !ref.startsWith("openai/")) {
+        continue;
+      }
+      if (known.has(ref.slice("openai/".length))) {
+        continue;
+      }
+      console.error("model check: retiring " + ref + "; this account cannot serve it");
+      if (typeof model === "string") {
+        delete holder.model;
+      } else {
+        delete model.primary;
+        // A model object emptied of its only key would still satisfy a reader
+        // that treats presence as an explicit choice. Leave no such shape.
+        if (Object.keys(model).length === 0) {
+          delete holder.model;
+        }
+      }
+      removed += 1;
+    }
+    console.error("model check: retired=" + removed);
+    if (removed > 0) {
+      fs.writeFileSync(configPath, JSON.stringify(cfg, null, 2) + "\n");
+    }
+  ' "$config_path"
 fi
 
 # The Gateway resolves every bind mode to an IPv4 address, so a platform whose
