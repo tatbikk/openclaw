@@ -388,4 +388,42 @@ if [ -n "${OPENCLAW_IPV6_PROXY_PORT:-}" ]; then
   runuser -u node -- node /usr/local/lib/openclaw-ipv6-proxy.js &
 fi
 
-exec runuser -u node -- "$@"
+# A restart request drains the Gateway, closes the server, and expects the
+# process to come back. Railway only revives a container that FAILED, so an exit
+# code 0 here ends the deployment for good - and there is no shell beside a
+# stopped container to bring it back, which is this deployment's whole premise.
+# Own that gap: a clean exit means "start me again", while a crash still leaves
+# through the platform's restart policy, so a bad config keeps surfacing as a
+# failed deploy instead of spinning here forever.
+stopping=0
+gateway_pid=""
+
+# Supervising costs the exec: SIGTERM now lands on this shell instead of the
+# Gateway. Forward it, or a container stop would skip the graceful shutdown that
+# flushes sessions and would look like a restart request on the way back up.
+forward_stop() {
+  stopping=1
+  if [ -n "$gateway_pid" ]; then
+    kill -TERM "$gateway_pid" 2>/dev/null || true
+  fi
+}
+trap forward_stop TERM INT
+
+while true; do
+  runuser -u node -- "$@" &
+  gateway_pid=$!
+  status=0
+  # A trapped signal makes `wait` return before the child does. Keep waiting so
+  # the decision below reads the Gateway's own exit status, not the signal's.
+  while true; do
+    wait "$gateway_pid" || status=$?
+    [ "$status" -gt 128 ] || break
+    status=0
+  done
+  gateway_pid=""
+  [ "$stopping" -eq 0 ] || exit 0
+  [ "$status" -eq 0 ] || exit "$status"
+  echo "gateway exited cleanly; restarting it" >&2
+  # Bound the loop: an immediate repeat is a restart storm, not a restart.
+  sleep 1
+done
