@@ -355,60 +355,28 @@ if ! run_openclaw config get plugins.entries.codex.config.appServer.homeScope >/
   run_openclaw config set plugins.entries.codex.config.appServer.homeScope agent >/dev/null
 fi
 
-# Set the default when unset, and also when it is one of the ids proven to fail
-# on this account (see the denylist below). Overwriting a retired selection is
-# what closes the loop that made this deploy silent: the strip alone would leave
-# the config empty, and the Gateway would then read openai/gpt-5.6-sol from the
-# shipped DEFAULT_MODEL fallback (src/agents/defaults.ts:4). Any operator choice
-# outside that denylist is left untouched.
-#
-# Try DeepSeek first only when its API key is present AND the build knows that
-# model - a plain API key needs no browser, so a fresh Pod without a Codex login
-# still has a working brain. If that set is rejected, fall through to the
-# ChatGPT-plan-safe openai/gpt-5.6-luna, which is in this account's catalog and
-# is the historical default for Codex over ChatGPT auth. The last boot proved
-# the failure mode of the previous shape: the deepseek set was rejected as
-# unknown and no fallback ran, leaving the default empty and the Gateway on the
-# shipped openai/gpt-5.6-sol constant.
-try_set_default_model() {
-  run_openclaw config set agents.defaults.model.primary "$1" >/dev/null 2>&1
-}
-current_default=$(run_openclaw config get agents.defaults.model.primary 2>/dev/null || true)
-case "$current_default" in
-  ""|"openai/gpt-5.6-sol")
-    set_ok=0
-    if [ -n "${DEEPSEEK_API_KEY:-}" ] && try_set_default_model deepseek/deepseek-v4-pro; then
-      set_ok=1
-    elif try_set_default_model openai/gpt-5.6-luna; then
-      set_ok=1
-    fi
-    if [ "$set_ok" -eq 0 ]; then
-      echo "warning: could not seed a working default model. The Gateway and Telegram still start; set agents.defaults.model.primary from chat with /model to a model this build knows." >&2
-    fi
-    ;;
-esac
+# The operator's stated choice on this deployment is openai/gpt-5.6-sol via the
+# Codex/ChatGPT subscription. This block will not override it - naming a
+# different id is a decision the operator makes from chat with /model, not
+# something this boot script picks on its behalf. It only seeds a default when
+# the config has none, so a fresh Pod comes up with a working brain.
+if ! run_openclaw config get agents.defaults.model.primary >/dev/null 2>&1; then
+  if ! run_openclaw config set agents.defaults.model.primary openai/gpt-5.6-sol >/dev/null 2>&1; then
+    echo "warning: could not seed the default model openai/gpt-5.6-sol. The Gateway and Telegram still start; set agents.defaults.model.primary from chat with /model." >&2
+  fi
+fi
 
-# Retire OpenAI selections the ChatGPT account cannot serve, wherever they are
-# written. The catalog cannot decide this: it lists every OpenAI model OpenClaw
-# knows, but a ChatGPT-plan session gets a smaller allowed set from the server
-# itself, and the previous boot proved the difference in real 400s
-# ("The '<model>' model is not supported when using Codex with a ChatGPT
-# account"). OpenClaw records each such rejection against the auth profile, and
-# the cooldown that follows takes down every agent sharing the credential - not
-# just the failing turn. So the source of truth is that live rejection, not the
-# catalog: keep a small denylist of ids proven to fail on this account, and
-# strike them wherever they are written. The lint is intentionally narrow -
-# other openai/* selections stay operator-chosen and untouched.
+# Report the roster's runtime + model per agent so a silent turn is diagnosable
+# from boot log alone - which agent is which, on which model, is the fact every
+# later "no reply" investigation needs first. This is diagnostics only; no
+# selection is judged or rewritten here. Sol vs luna vs terra is an operator
+# choice made from chat with /model, not from this boot script.
 if [ -f "$config_path" ]; then
   runuser -u node -- node -e '
     const fs = require("node:fs");
     const configPath = process.argv[1];
-    // Update as new ChatGPT-plan rejections are proven in the deploy log.
-    const chatgptPlanDenied = new Set(["openai/gpt-5.6-sol"]);
     const cfg = JSON.parse(fs.readFileSync(configPath, "utf8"));
     const entries = cfg.agents?.entries ?? {};
-    // Report the whole roster: a per-agent model outlives any default, so a
-    // report that only covers the default reads as clean while an agent is dead.
     for (const [id, entry] of Object.entries(entries)) {
       console.error(
         "agent " + id +
@@ -416,34 +384,10 @@ if [ -f "$config_path" ]; then
           " model=" + (entry?.model?.primary ?? entry?.model ?? "<inherited>"),
       );
     }
-    const holders = [cfg.agents?.defaults, ...Object.values(entries)];
-    let removed = 0;
-    for (const holder of holders) {
-      const model = holder?.model;
-      const ref = typeof model === "string" ? model : model?.primary;
-      if (typeof ref !== "string" || !chatgptPlanDenied.has(ref)) {
-        continue;
-      }
-      console.error(
-        "model check: retiring " + ref +
-          "; ChatGPT-plan Codex rejected it as unsupported for this account",
-      );
-      if (typeof model === "string") {
-        delete holder.model;
-      } else {
-        delete model.primary;
-        // A model object emptied of its only key would still satisfy a reader
-        // that treats presence as an explicit choice. Leave no such shape.
-        if (Object.keys(model).length === 0) {
-          delete holder.model;
-        }
-      }
-      removed += 1;
-    }
-    console.error("model check: retired=" + removed);
-    if (removed > 0) {
-      fs.writeFileSync(configPath, JSON.stringify(cfg, null, 2) + "\n");
-    }
+    console.error(
+      "agent <defaults>: model=" +
+        (cfg.agents?.defaults?.model?.primary ?? cfg.agents?.defaults?.model ?? "<unset>"),
+    );
   ' "$config_path"
 fi
 
