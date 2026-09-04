@@ -356,15 +356,21 @@ if ! run_openclaw config get plugins.entries.codex.config.appServer.homeScope >/
 fi
 
 # The operator's stated choice on this deployment is openai/gpt-5.6-sol via the
-# Codex/ChatGPT subscription. This block will not override it - naming a
-# different id is a decision the operator makes from chat with /model, not
-# something this boot script picks on its behalf. It only seeds a default when
-# the config has none, so a fresh Pod comes up with a working brain.
-if ! run_openclaw config get agents.defaults.model.primary >/dev/null 2>&1; then
-  if ! run_openclaw config set agents.defaults.model.primary openai/gpt-5.6-sol >/dev/null 2>&1; then
-    echo "warning: could not seed the default model openai/gpt-5.6-sol. The Gateway and Telegram still start; set agents.defaults.model.primary from chat with /model." >&2
-  fi
-fi
+# Codex/ChatGPT subscription. Seed sol when the default is unset OR when it is
+# openai/gpt-5.6-luna - which is the value my earlier meddling wrote to the
+# volume before this revert. Without the luna case the seed would preserve my
+# wrong write forever ("only when unset" would treat luna as an operator
+# choice); with it, one boot restores the operator's stated choice, and every
+# later boot leaves any operator-chosen value alone. Sol vs luna vs terra
+# afterwards is a decision the operator makes from chat with /model.
+current_default=$(run_openclaw config get agents.defaults.model.primary 2>/dev/null || true)
+case "$current_default" in
+  ""|"openai/gpt-5.6-luna")
+    if ! run_openclaw config set agents.defaults.model.primary openai/gpt-5.6-sol >/dev/null 2>&1; then
+      echo "warning: could not seed the default model openai/gpt-5.6-sol. The Gateway and Telegram still start; set agents.defaults.model.primary from chat with /model." >&2
+    fi
+    ;;
+esac
 
 # Report the roster's runtime + model per agent so a silent turn is diagnosable
 # from boot log alone - which agent is which, on which model, is the fact every
