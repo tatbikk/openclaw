@@ -355,32 +355,35 @@ if ! run_openclaw config get plugins.entries.codex.config.appServer.homeScope >/
   run_openclaw config set plugins.entries.codex.config.appServer.homeScope agent >/dev/null
 fi
 
-# A plain API key needs no browser, so a Pod with DEEPSEEK_API_KEY has a working
-# brain on its very first boot. That agent can then drive the interactive
-# ChatGPT and Codex logins over Telegram instead of requiring a Pod terminal.
-#
-# Without that key, name a ChatGPT-plan-safe model. Not naming one falls back to
-# the shipped default, which is currently openai/gpt-5.6-sol - a model this
-# account cannot serve, proven in the deploy log by real 400s ("not supported
-# when using Codex with a ChatGPT account"). The operator can still switch it
-# from chat with /model; this is a working seed, not a lock.
-if [ -n "${DEEPSEEK_API_KEY:-}" ]; then
-  bootstrap_model=deepseek/deepseek-v4-pro
-else
-  bootstrap_model=openai/gpt-5.6-luna
-fi
-
 # Set the default when unset, and also when it is one of the ids proven to fail
 # on this account (see the denylist below). Overwriting a retired selection is
 # what closes the loop that made this deploy silent: the strip alone would leave
 # the config empty, and the Gateway would then read openai/gpt-5.6-sol from the
 # shipped DEFAULT_MODEL fallback (src/agents/defaults.ts:4). Any operator choice
 # outside that denylist is left untouched.
+#
+# Try DeepSeek first only when its API key is present AND the build knows that
+# model - a plain API key needs no browser, so a fresh Pod without a Codex login
+# still has a working brain. If that set is rejected, fall through to the
+# ChatGPT-plan-safe openai/gpt-5.6-luna, which is in this account's catalog and
+# is the historical default for Codex over ChatGPT auth. The last boot proved
+# the failure mode of the previous shape: the deepseek set was rejected as
+# unknown and no fallback ran, leaving the default empty and the Gateway on the
+# shipped openai/gpt-5.6-sol constant.
+try_set_default_model() {
+  run_openclaw config set agents.defaults.model.primary "$1" >/dev/null 2>&1
+}
 current_default=$(run_openclaw config get agents.defaults.model.primary 2>/dev/null || true)
 case "$current_default" in
   ""|"openai/gpt-5.6-sol")
-    if ! run_openclaw config set agents.defaults.model.primary "$bootstrap_model" >/dev/null 2>&1; then
-      echo "warning: could not set default model $bootstrap_model. The Gateway and Telegram still start; set agents.defaults.model.primary to a model this build knows." >&2
+    set_ok=0
+    if [ -n "${DEEPSEEK_API_KEY:-}" ] && try_set_default_model deepseek/deepseek-v4-pro; then
+      set_ok=1
+    elif try_set_default_model openai/gpt-5.6-luna; then
+      set_ok=1
+    fi
+    if [ "$set_ok" -eq 0 ]; then
+      echo "warning: could not seed a working default model. The Gateway and Telegram still start; set agents.defaults.model.primary from chat with /model to a model this build knows." >&2
     fi
     ;;
 esac
