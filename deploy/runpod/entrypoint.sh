@@ -386,29 +386,23 @@ if [ -n "$bootstrap_model" ] && ! run_openclaw config get agents.defaults.model.
   fi
 fi
 
-# Refresh before reading: the stored catalog is what a stale selection is judged
-# against, and an account's entitlements change without this deployment knowing.
-run_openclaw models refresh >/dev/null 2>&1 ||
-  echo "warning: could not refresh the model catalog; judging selections against the stored one" >&2
-openai_catalog=$(run_openclaw models list --provider openai --all --plain 2>/dev/null || true)
-
-# Retire OpenAI selections the account cannot serve, wherever they are written.
-# This is the repair the paragraph above only prevents: the bad id is already on
-# the volume from an earlier boot, and it survives every redeploy because config
-# is authoritative. Leaving it costs the credential, not just the turn. An empty
-# catalog proves nothing, so that case changes nothing.
+# Retire OpenAI selections the ChatGPT account cannot serve, wherever they are
+# written. The catalog cannot decide this: it lists every OpenAI model OpenClaw
+# knows, but a ChatGPT-plan session gets a smaller allowed set from the server
+# itself, and the previous boot proved the difference in real 400s
+# ("The '<model>' model is not supported when using Codex with a ChatGPT
+# account"). OpenClaw records each such rejection against the auth profile, and
+# the cooldown that follows takes down every agent sharing the credential - not
+# just the failing turn. So the source of truth is that live rejection, not the
+# catalog: keep a small denylist of ids proven to fail on this account, and
+# strike them wherever they are written. The lint is intentionally narrow -
+# other openai/* selections stay operator-chosen and untouched.
 if [ -f "$config_path" ]; then
-  OPENCLAW_OPENAI_CATALOG="$openai_catalog" runuser -u node -- node -e '
+  runuser -u node -- node -e '
     const fs = require("node:fs");
     const configPath = process.argv[1];
-    const catalog = process.env.OPENCLAW_OPENAI_CATALOG ?? "";
-    const known = new Set(
-      catalog
-        .split(/\s+/)
-        .filter(Boolean)
-        .map((token) => (token.includes("/") ? token.slice(token.lastIndexOf("/") + 1) : token)),
-    );
-    console.error("openai catalog: " + (known.size > 0 ? [...known].join(",") : "<empty>"));
+    // Update as new ChatGPT-plan rejections are proven in the deploy log.
+    const chatgptPlanDenied = new Set(["openai/gpt-5.6-sol"]);
     const cfg = JSON.parse(fs.readFileSync(configPath, "utf8"));
     const entries = cfg.agents?.entries ?? {};
     // Report the whole roster: a per-agent model outlives any default, so a
@@ -420,22 +414,18 @@ if [ -f "$config_path" ]; then
           " model=" + (entry?.model?.primary ?? entry?.model ?? "<inherited>"),
       );
     }
-    if (known.size === 0) {
-      console.error("model check: catalog unavailable; leaving every selection in place");
-      process.exit(0);
-    }
     const holders = [cfg.agents?.defaults, ...Object.values(entries)];
     let removed = 0;
     for (const holder of holders) {
       const model = holder?.model;
       const ref = typeof model === "string" ? model : model?.primary;
-      if (typeof ref !== "string" || !ref.startsWith("openai/")) {
+      if (typeof ref !== "string" || !chatgptPlanDenied.has(ref)) {
         continue;
       }
-      if (known.has(ref.slice("openai/".length))) {
-        continue;
-      }
-      console.error("model check: retiring " + ref + "; this account cannot serve it");
+      console.error(
+        "model check: retiring " + ref +
+          "; ChatGPT-plan Codex rejected it as unsupported for this account",
+      );
       if (typeof model === "string") {
         delete holder.model;
       } else {
