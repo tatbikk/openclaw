@@ -359,32 +359,31 @@ fi
 # brain on its very first boot. That agent can then drive the interactive
 # ChatGPT and Codex logins over Telegram instead of requiring a Pod terminal.
 #
-# Without that key there is deliberately no fallback constant. A model id named
-# here has to exist in the operator account's own catalog, and naming one that
-# does not is worse than naming none: Codex answers 400 "The '<id>' model is not
-# supported when using Codex with a ChatGPT account", OpenClaw records that
-# rejection against the auth profile, and the cooldown that follows fails every
-# later turn on every agent sharing the credential - in milliseconds, with the
-# reply simply absent. Codex chooses correctly when nothing is named: its
-# models-manager preserves a provided model and otherwise takes the catalog
-# entry flagged is_default (codex-rs/models-manager/src/manager.rs:159,:597).
+# Without that key, name a ChatGPT-plan-safe model. Not naming one falls back to
+# the shipped default, which is currently openai/gpt-5.6-sol - a model this
+# account cannot serve, proven in the deploy log by real 400s ("not supported
+# when using Codex with a ChatGPT account"). The operator can still switch it
+# from chat with /model; this is a working seed, not a lock.
 if [ -n "${DEEPSEEK_API_KEY:-}" ]; then
   bootstrap_model=deepseek/deepseek-v4-pro
 else
-  bootstrap_model=
+  bootstrap_model=openai/gpt-5.6-luna
 fi
 
-# Choose defaults only when the operator has not already made an explicit
-# choice. Config itself remains authoritative after redeploys.
-# A default model is a convenience, not a boot requirement: the Gateway, the
-# Telegram transport, and the relay path all work without one. Never let an
-# unusable bootstrap model crash-loop the container — warn and carry on so the
-# operator can fix the model over chat instead of from the logs alone.
-if [ -n "$bootstrap_model" ] && ! run_openclaw config get agents.defaults.model.primary >/dev/null 2>&1; then
-  if ! run_openclaw config set agents.defaults.model.primary "$bootstrap_model" >/dev/null 2>&1; then
-    echo "warning: could not set default model $bootstrap_model. The Gateway and Telegram still start; set agents.defaults.model.primary to a model this build knows." >&2
-  fi
-fi
+# Set the default when unset, and also when it is one of the ids proven to fail
+# on this account (see the denylist below). Overwriting a retired selection is
+# what closes the loop that made this deploy silent: the strip alone would leave
+# the config empty, and the Gateway would then read openai/gpt-5.6-sol from the
+# shipped DEFAULT_MODEL fallback (src/agents/defaults.ts:4). Any operator choice
+# outside that denylist is left untouched.
+current_default=$(run_openclaw config get agents.defaults.model.primary 2>/dev/null || true)
+case "$current_default" in
+  ""|"openai/gpt-5.6-sol")
+    if ! run_openclaw config set agents.defaults.model.primary "$bootstrap_model" >/dev/null 2>&1; then
+      echo "warning: could not set default model $bootstrap_model. The Gateway and Telegram still start; set agents.defaults.model.primary to a model this build knows." >&2
+    fi
+    ;;
+esac
 
 # Retire OpenAI selections the ChatGPT account cannot serve, wherever they are
 # written. The catalog cannot decide this: it lists every OpenAI model OpenClaw
