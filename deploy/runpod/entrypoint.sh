@@ -249,6 +249,48 @@ fi
 # blocks the boot, since a degraded Gateway still beats no Gateway.
 run_openclaw doctor --fix || echo "warning: doctor --fix did not complete; continuing to start the Gateway" >&2
 
+# Clear any auth-profile cooldown/disabled state written during prior quota
+# exhaustion. The cooldown is stored in the agent SQLite database and persists
+# across container restarts, blocking every turn indefinitely even after quota
+# is restored. Resetting it here gives the Gateway a clean start. Failures
+# only warn; a lingering cooldown degrades turns but never prevents boot.
+auth_profile_db="$state_dir/agents/main/agent/openclaw-agent.sqlite"
+if [ -f "$auth_profile_db" ]; then
+  runuser -u node -- node -e '
+    const { DatabaseSync } = require("node:sqlite");
+    const dbPath = process.argv[1];
+    try {
+      const db = new DatabaseSync(dbPath);
+      const row = db.prepare("SELECT state_json FROM auth_profile_state WHERE state_key = ?").get("primary");
+      if (row && row.state_json) {
+        const state = JSON.parse(row.state_json);
+        const usageStats = state.usageStats;
+        let changed = false;
+        if (usageStats && typeof usageStats === "object") {
+          for (const usage of Object.values(usageStats)) {
+            for (const field of ["cooldownUntil", "cooldownReason", "cooldownModel", "disabledUntil", "disabledReason"]) {
+              if (field in usage) {
+                delete usage[field];
+                changed = true;
+              }
+            }
+          }
+        }
+        if (changed) {
+          db.prepare("UPDATE auth_profile_state SET state_json = ?, updated_at = ? WHERE state_key = ?")
+            .run(JSON.stringify(state), Date.now(), "primary");
+          process.stderr.write("[startup] cleared persisted auth profile cooldown state\n");
+        } else {
+          process.stderr.write("[startup] auth profile state: no persisted cooldown found\n");
+        }
+      }
+      db.close();
+    } catch (e) {
+      process.stderr.write("[startup] warning: could not clear auth profile cooldown: " + e.message + "\n");
+    }
+  ' "$auth_profile_db" || echo "warning: auth profile cooldown script exited non-zero; continuing" >&2
+fi
+
 # The public RunPod proxy needs explicit Gateway auth and an exact browser origin.
 # Reapply only this deployment-owned boundary on boot so a replacement Pod ID works.
 run_openclaw config set --batch-json "$(
