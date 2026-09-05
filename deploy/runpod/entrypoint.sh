@@ -256,10 +256,10 @@ run_openclaw doctor --fix || echo "warning: doctor --fix did not complete; conti
 # only warn; a lingering cooldown degrades turns but never prevents boot.
 auth_profile_db="$state_dir/agents/main/agent/openclaw-agent.sqlite"
 if [ -f "$auth_profile_db" ]; then
-  runuser -u node -- node -e '
-    const { DatabaseSync } = require("node:sqlite");
+  runuser -u node -- node --experimental-sqlite -e '
     const dbPath = process.argv[1];
     try {
+      const { DatabaseSync } = require("node:sqlite");
       const db = new DatabaseSync(dbPath);
       const row = db.prepare("SELECT state_json FROM auth_profile_state WHERE state_key = ?").get("primary");
       if (row && row.state_json) {
@@ -279,14 +279,14 @@ if [ -f "$auth_profile_db" ]; then
         if (changed) {
           db.prepare("UPDATE auth_profile_state SET state_json = ?, updated_at = ? WHERE state_key = ?")
             .run(JSON.stringify(state), Date.now(), "primary");
-          process.stderr.write("[startup] cleared persisted auth profile cooldown state\n");
+          process.stdout.write("[startup] cleared persisted auth profile cooldown state\n");
         } else {
-          process.stderr.write("[startup] auth profile state: no persisted cooldown found\n");
+          process.stdout.write("[startup] auth profile state: no persisted cooldown found\n");
         }
       }
       db.close();
     } catch (e) {
-      process.stderr.write("[startup] warning: could not clear auth profile cooldown: " + e.message + "\n");
+      process.stdout.write("[startup] warning: could not clear auth profile cooldown: " + e.message + "\n");
     }
   ' "$auth_profile_db" || echo "warning: auth profile cooldown script exited non-zero; continuing" >&2
 fi
