@@ -249,46 +249,52 @@ fi
 # blocks the boot, since a degraded Gateway still beats no Gateway.
 run_openclaw doctor --fix || echo "warning: doctor --fix did not complete; continuing to start the Gateway" >&2
 
-# Clear any auth-profile cooldown/disabled state written during prior quota
-# exhaustion. The cooldown is stored in the agent SQLite database and persists
-# across container restarts, blocking every turn indefinitely even after quota
-# is restored. Resetting it here gives the Gateway a clean start. Failures
-# only warn; a lingering cooldown degrades turns but never prevents boot.
-auth_profile_db="$state_dir/agents/main/agent/openclaw-agent.sqlite"
-if [ -f "$auth_profile_db" ]; then
+# Clear auth-profile unavailable windows written during prior quota exhaustion.
+# The 2026.8.2 image owns shared auth state in config_machine_state; targeting an
+# agent database leaves the real blockedUntil untouched after quota is restored.
+# Resetting here gives each boot one clean probe. Failures only warn so a stale
+# window can degrade turns but never prevent the Gateway from starting.
+auth_state_db="$state_dir/state/openclaw.sqlite"
+if [ -f "$auth_state_db" ]; then
   runuser -u node -- node --experimental-sqlite -e '
     const dbPath = process.argv[1];
     try {
       const { DatabaseSync } = require("node:sqlite");
       const db = new DatabaseSync(dbPath);
-      const row = db.prepare("SELECT state_json FROM auth_profile_state WHERE state_key = ?").get("primary");
-      if (row && row.state_json) {
-        const state = JSON.parse(row.state_json);
+      const stateKey = "authProfiles.state";
+      const row = db.prepare("SELECT value_json FROM config_machine_state WHERE state_key = ?").get(stateKey);
+      if (row && row.value_json) {
+        const state = JSON.parse(row.value_json);
         const usageStats = state.usageStats;
-        let changed = false;
+        let clearedProfiles = 0;
+        const unavailableFields = [
+          "blockedUntil", "blockedReason", "blockedSource", "blockedModel", "blockedScope",
+          "cooldownUntil", "cooldownReason", "cooldownClassification", "cooldownModel",
+          "disabledUntil", "disabledReason", "failureCounts",
+        ];
         if (usageStats && typeof usageStats === "object") {
           for (const usage of Object.values(usageStats)) {
-            for (const field of ["cooldownUntil", "cooldownReason", "cooldownModel", "disabledUntil", "disabledReason"]) {
-              if (field in usage) {
-                delete usage[field];
-                changed = true;
-              }
-            }
+            if (!usage || typeof usage !== "object" || !unavailableFields.some((field) => field in usage)) continue;
+            for (const field of unavailableFields) delete usage[field];
+            usage.errorCount = 0;
+            clearedProfiles += 1;
           }
         }
-        if (changed) {
-          db.prepare("UPDATE auth_profile_state SET state_json = ?, updated_at = ? WHERE state_key = ?")
-            .run(JSON.stringify(state), Date.now(), "primary");
-          process.stdout.write("[startup] cleared persisted auth profile cooldown state\n");
+        if (clearedProfiles > 0) {
+          db.prepare("UPDATE config_machine_state SET value_json = ?, updated_at_ms = ? WHERE state_key = ?")
+            .run(JSON.stringify(state), Date.now(), stateKey);
+          process.stdout.write("[startup] cleared persisted auth unavailability for " + clearedProfiles + " profile(s)\n");
         } else {
-          process.stdout.write("[startup] auth profile state: no persisted cooldown found\n");
+          process.stdout.write("[startup] auth profile state: no persisted unavailable window found\n");
         }
+      } else {
+        process.stdout.write("[startup] auth profile state: no shared state row found\n");
       }
       db.close();
     } catch (e) {
-      process.stdout.write("[startup] warning: could not clear auth profile cooldown: " + e.message + "\n");
+      process.stdout.write("[startup] warning: could not clear auth profile unavailable state: " + e.message + "\n");
     }
-  ' "$auth_profile_db" || echo "warning: auth profile cooldown script exited non-zero; continuing" >&2
+  ' "$auth_state_db" || echo "warning: auth profile unavailable-state script exited non-zero; continuing" >&2
 fi
 
 # The public RunPod proxy needs explicit Gateway auth and an exact browser origin.
