@@ -3,6 +3,7 @@ set -eu
 
 runtime_root=/workspace/openclaw
 state_dir=${OPENCLAW_STATE_DIR:-$runtime_root/state}
+config_path=${OPENCLAW_CONFIG_PATH:-$state_dir/openclaw.json}
 config_home=${XDG_CONFIG_HOME:-$runtime_root/config}
 openclaw_home=${OPENCLAW_HOME:-$runtime_root/home}
 workspace_dir=${OPENCLAW_WORKSPACE_DIR:-$state_dir/workspace}
@@ -11,9 +12,8 @@ claude_home=${CLAUDE_CONFIG_DIR:-$runtime_root/claude}
 acpx_state_dir=$runtime_root/acpx
 code_workspace=${OPENCLAW_CODE_WORKSPACE:-/workspace/code}
 
-codex_plugin_version=${OPENCLAW_RUNPOD_CODEX_PLUGIN_VERSION:-2026.7.2-beta.7}
-acpx_plugin_version=${OPENCLAW_RUNPOD_ACPX_PLUGIN_VERSION:-2026.7.2-beta.7}
-deepseek_plugin_version=${OPENCLAW_RUNPOD_DEEPSEEK_PLUGIN_VERSION:-2026.7.2-beta.7}
+acpx_plugin_version=${OPENCLAW_RUNPOD_ACPX_PLUGIN_VERSION:-2026.8.2}
+deepseek_plugin_version=${OPENCLAW_RUNPOD_DEEPSEEK_PLUGIN_VERSION:-2026.8.2}
 
 # ACP harness sessions have no TTY, so a harness permission prompt cannot be
 # answered. approve-all lets the relay and coding paths actually write files and
@@ -109,41 +109,193 @@ if [ -z "${CLAUDE_CODE_OAUTH_TOKEN:-}" ] && [ -z "${ANTHROPIC_API_KEY:-}" ]; the
   echo "warning: neither CLAUDE_CODE_OAUTH_TOKEN nor ANTHROPIC_API_KEY is set; the claude ACP harness will fail until one is provided. Codex paths are unaffected." >&2
 fi
 
-plugin_installed() {
+# Presence is not enough. A plugin left on the volume by an older image is
+# compiled against the Plugin SDK of its own release, so against this runtime it
+# fails to load on a missing export - and a provider that cannot load contributes
+# no models at all, silently. Match the pinned version, not just the file.
+plugin_at_version() {
   found=$(find "$state_dir/npm/projects" -path "*/node_modules/@openclaw/$1/package.json" -print -quit 2>/dev/null || true)
-  [ -n "$found" ]
+  [ -n "$found" ] || return 1
+  node -e 'const fs = require("node:fs");
+    const [manifest, wanted] = process.argv.slice(1);
+    process.exit(JSON.parse(fs.readFileSync(manifest, "utf8")).version === wanted ? 0 : 1);
+  ' "$found" "$2"
 }
 
 volume_has_state() {
   [ -e "$state_dir/openclaw.sqlite" ] || [ -d "$state_dir/npm/projects" ]
 }
 
-# A fresh volume gets the whole pre-installed plugin state. An existing volume is
-# never overwritten: report the exact one-time install instead of clobbering a
-# database and OAuth profile that are already in use.
-if ! plugin_installed codex || ! plugin_installed acpx || ! plugin_installed deepseek-provider; then
-  if volume_has_state; then
-    echo "OpenClaw state exists on this volume but a required plugin is missing." >&2
-    echo "Run these once in the Pod terminal, then restart the Pod:" >&2
-    if ! plugin_installed codex; then
-      echo "  runuser -u node -- openclaw plugins install npm:@openclaw/codex@${codex_plugin_version}" >&2
-    fi
-    if ! plugin_installed acpx; then
-      echo "  runuser -u node -- openclaw plugins install npm:@openclaw/acpx@${acpx_plugin_version}" >&2
-    fi
-    if ! plugin_installed deepseek-provider; then
-      echo "  runuser -u node -- openclaw plugins install npm:@openclaw/deepseek-provider@${deepseek_plugin_version}" >&2
-    fi
-    echo "Alternatively start from a fresh Network Volume to use the image's pre-installed plugins." >&2
-    exit 66
-  fi
+run_openclaw() {
+  runuser -u node -- node /app/openclaw.mjs "$@"
+}
+
+# A fresh volume gets the whole pre-installed plugin state in one copy. An
+# existing volume is never overwritten that way - the copy would land on a
+# database and OAuth profile already in use - so install just the plugins that
+# are actually missing.
+#
+# Codex is not in this set: the runtime image bundles it. A managed npm copy of
+# a bundled plugin is stripped by the Gateway on every boot, which changes the
+# plugin inventory mid-startup and costs readiness - so reinstalling it here
+# each boot would loop forever rather than converge.
+#
+# Printing the command for an operator to run instead was a dead end: this
+# platform offers no shell into a container that exits, so a single missing
+# plugin left the deployment crash-looping with no way to act on the advice. A
+# targeted install touches nothing else on the volume, so do it here.
+# --force is what makes this a repair rather than a request: a plain install
+# refuses outright when a copy of the package is already on the volume, which is
+# precisely the state being repaired. A failure only warns, because a plugin the
+# Gateway can start without must never cost the whole boot - there is no shell
+# here to recover a container that keeps exiting.
+install_plugin() {
+  plugin_at_version "$1" "$3" && return 0
+  echo "plugin $1 is absent or not at $3 on this volume; installing $2@$3" >&2
+  run_openclaw plugins install --accept-capabilities --force "npm:$2@$3" ||
+    echo "warning: could not install $2@$3; starting without it" >&2
+}
+
+if volume_has_state; then
+  install_plugin acpx @openclaw/acpx "$acpx_plugin_version"
+  install_plugin deepseek-provider @openclaw/deepseek-provider "$deepseek_plugin_version"
+else
   cp -a /opt/openclaw-plugin-seed/. "$state_dir/"
   chown -R node:node "$state_dir"
 fi
 
-run_openclaw() {
-  runuser -u node -- node /app/openclaw.mjs "$@"
-}
+# A roster that grew past one agent is refused from 2026.8.x on unless it says
+# who owns it, and that refusal lands on the very first `config set` below: the
+# Gateway never starts, and the volume cannot be repaired from a shell the crash
+# loop leaves no time to open.
+#
+# Stamping ownership alone is not the repair. An explicit fleet has no implicit
+# default, so a channel with no matching binding fails closed and the bot goes
+# quiet instead of crashing - the worse outcome of the two. Stamp the marker and
+# the channel binding together, and leave a roster that already declares an
+# owner in either shape untouched.
+#
+# The roster is read from both shapes it can be on disk in: the current
+# `entries` map, and the older `list` array a volume written before the rename
+# still carries. Report what was found either way - a silent skip here reads
+# exactly like a boot that never ran this at all.
+if [ -f "$config_path" ]; then
+  runuser -u node -- node -e '
+    const fs = require("node:fs");
+    const configPath = process.argv[1];
+    const cfg = JSON.parse(fs.readFileSync(configPath, "utf8"));
+    const agents = (cfg.agents ??= {});
+    const entries = agents.entries ?? {};
+    const ids = Object.keys(entries);
+    const marked = ids.filter((id) => entries[id]?.default === true);
+    const bindings = Array.isArray(cfg.bindings) ? cfg.bindings : [];
+    const telegramBinding = bindings.find((binding) => binding?.match?.channel === "telegram");
+    // One marker is the legacy way to name the owner; several name none of
+    // them, which is how this volume got stuck - the roster looked declared to
+    // a lenient reader and undeclared to the one that matters. Take the sole
+    // marker as the owner when there is exactly one, and drop every marker
+    // afterwards so the current shape is the only one left to read.
+    let owner = telegramBinding?.agentId ?? (ids.includes("main") ? "main" : ids[0]);
+    let changed = false;
+    if (ids.length >= 2 && !agents.ownership) {
+      if (marked.length === 1) {
+        owner = marked[0];
+      }
+      for (const id of marked) {
+        delete entries[id].default;
+      }
+      agents.ownership = "explicit";
+      changed = true;
+    }
+    if (agents.ownership && !telegramBinding && owner) {
+      bindings.push({ agentId: owner, match: { channel: "telegram", accountId: "*" } });
+      cfg.bindings = bindings;
+      changed = true;
+    }
+    // Default the owner to an ACP harness session. Codex then drives the turn
+    // over the operator subscription and picks its own model, so OpenClaw never
+    // names one - which is the whole failure this avoids: a model id written
+    // here has to exist in that account catalog, and a mismatch both kills the
+    // reply and cools down the credential that was never at fault.
+    if (entries[owner] && !entries[owner].runtime) {
+      entries[owner].runtime = {
+        type: "acp",
+        acp: { agent: "codex", backend: "acpx", mode: "persistent" },
+      };
+      changed = true;
+    }
+    console.error(
+      "roster check: entries=" + ids.length +
+        " marked=" + marked.length +
+        " ownership=" + agents.ownership +
+        " owner=" + owner +
+        " runtime=" + (entries[owner]?.runtime?.type ?? "embedded") +
+        " changed=" + changed,
+    );
+    if (changed) {
+      fs.writeFileSync(configPath, JSON.stringify(cfg, null, 2) + "\n");
+    }
+  ' "$config_path"
+else
+  echo "roster check: no config at $config_path" >&2
+fi
+
+# Doctor is the only owner of state repairs that must happen while the Gateway
+# is stopped - a session row in an older canonical shape, a legacy store left by
+# an upgrade. The Gateway itself can only report those and carry on degraded,
+# and its advice to "stop the Gateway and run openclaw doctor --fix" assumes a
+# shell this platform does not offer. Boot is the one moment that shell exists,
+# so spend it here. Repeat runs are no-ops; a failure is reported and never
+# blocks the boot, since a degraded Gateway still beats no Gateway.
+run_openclaw doctor --fix || echo "warning: doctor --fix did not complete; continuing to start the Gateway" >&2
+
+# Clear auth-profile unavailable windows written during prior quota exhaustion.
+# The 2026.8.2 image owns shared auth state in config_machine_state; targeting an
+# agent database leaves the real blockedUntil untouched after quota is restored.
+# Resetting here gives each boot one clean probe. Failures only warn so a stale
+# window can degrade turns but never prevent the Gateway from starting.
+auth_state_db="$state_dir/state/openclaw.sqlite"
+if [ -f "$auth_state_db" ]; then
+  runuser -u node -- node --experimental-sqlite -e '
+    const dbPath = process.argv[1];
+    try {
+      const { DatabaseSync } = require("node:sqlite");
+      const db = new DatabaseSync(dbPath);
+      const stateKey = "authProfiles.state";
+      const row = db.prepare("SELECT value_json FROM config_machine_state WHERE state_key = ?").get(stateKey);
+      if (row && row.value_json) {
+        const state = JSON.parse(row.value_json);
+        const usageStats = state.usageStats;
+        let clearedProfiles = 0;
+        const unavailableFields = [
+          "blockedUntil", "blockedReason", "blockedSource", "blockedModel", "blockedScope",
+          "cooldownUntil", "cooldownReason", "cooldownClassification", "cooldownModel",
+          "disabledUntil", "disabledReason", "failureCounts",
+        ];
+        if (usageStats && typeof usageStats === "object") {
+          for (const usage of Object.values(usageStats)) {
+            if (!usage || typeof usage !== "object" || !unavailableFields.some((field) => field in usage)) continue;
+            for (const field of unavailableFields) delete usage[field];
+            usage.errorCount = 0;
+            clearedProfiles += 1;
+          }
+        }
+        if (clearedProfiles > 0) {
+          db.prepare("UPDATE config_machine_state SET value_json = ?, updated_at_ms = ? WHERE state_key = ?")
+            .run(JSON.stringify(state), Date.now(), stateKey);
+          process.stdout.write("[startup] cleared persisted auth unavailability for " + clearedProfiles + " profile(s)\n");
+        } else {
+          process.stdout.write("[startup] auth profile state: no persisted unavailable window found\n");
+        }
+      } else {
+        process.stdout.write("[startup] auth profile state: no shared state row found\n");
+      }
+      db.close();
+    } catch (e) {
+      process.stdout.write("[startup] warning: could not clear auth profile unavailable state: " + e.message + "\n");
+    }
+  ' "$auth_state_db" || echo "warning: auth profile unavailable-state script exited non-zero; continuing" >&2
+fi
 
 # The public RunPod proxy needs explicit Gateway auth and an exact browser origin.
 # Reapply only this deployment-owned boundary on boot so a replacement Pod ID works.
@@ -251,29 +403,46 @@ if ! run_openclaw config get plugins.entries.codex.config.appServer.homeScope >/
   run_openclaw config set plugins.entries.codex.config.appServer.homeScope agent >/dev/null
 fi
 
-# A plain API key needs no browser, so a Pod with DEEPSEEK_API_KEY has a working
-# brain on its very first boot. That agent can then drive the interactive
-# ChatGPT and Codex logins over Telegram instead of requiring a Pod terminal.
-# Without the key, fall back to the subscription model, which needs a login first.
-if [ -n "${DEEPSEEK_API_KEY:-}" ]; then
-  bootstrap_model=deepseek/deepseek-v4-pro
-else
-  bootstrap_model=openai/gpt-5.6-sol
-fi
+# The operator's stated choice on this deployment is openai/gpt-5.6-sol via the
+# Codex/ChatGPT subscription. Seed sol when the default is unset OR when it is
+# openai/gpt-5.6-luna - which is the value my earlier meddling wrote to the
+# volume before this revert. Without the luna case the seed would preserve my
+# wrong write forever ("only when unset" would treat luna as an operator
+# choice); with it, one boot restores the operator's stated choice, and every
+# later boot leaves any operator-chosen value alone. Sol vs luna vs terra
+# afterwards is a decision the operator makes from chat with /model.
+current_default=$(run_openclaw config get agents.defaults.model.primary 2>/dev/null || true)
+case "$current_default" in
+  ""|"openai/gpt-5.6-luna")
+    if ! run_openclaw config set agents.defaults.model.primary openai/gpt-5.6-sol >/dev/null 2>&1; then
+      echo "warning: could not seed the default model openai/gpt-5.6-sol. The Gateway and Telegram still start; set agents.defaults.model.primary from chat with /model." >&2
+    fi
+    ;;
+esac
 
-# Choose defaults only when the operator has not already made an explicit
-# choice. Config itself remains authoritative after redeploys.
-# A default model is a convenience, not a boot requirement: the Gateway, the
-# Telegram transport, and the relay path all work without one. Never let an
-# unusable bootstrap model crash-loop the container — warn and carry on so the
-# operator can fix the model over chat instead of from the logs alone.
-if ! run_openclaw config get agents.defaults.model.primary >/dev/null 2>&1; then
-  if ! run_openclaw config set agents.defaults.model.primary "$bootstrap_model" >/dev/null 2>&1; then
-    echo "warning: could not set default model $bootstrap_model. The Gateway and Telegram still start; set agents.defaults.model.primary to a model this build knows." >&2
-  fi
-fi
-if ! run_openclaw config get 'agents.defaults.models["openai/gpt-5.6-sol"].agentRuntime.id' >/dev/null 2>&1; then
-  run_openclaw config set 'agents.defaults.models["openai/gpt-5.6-sol"].agentRuntime.id' codex >/dev/null
+# Report the roster's runtime + model per agent so a silent turn is diagnosable
+# from boot log alone - which agent is which, on which model, is the fact every
+# later "no reply" investigation needs first. This is diagnostics only; no
+# selection is judged or rewritten here. Sol vs luna vs terra is an operator
+# choice made from chat with /model, not from this boot script.
+if [ -f "$config_path" ]; then
+  runuser -u node -- node -e '
+    const fs = require("node:fs");
+    const configPath = process.argv[1];
+    const cfg = JSON.parse(fs.readFileSync(configPath, "utf8"));
+    const entries = cfg.agents?.entries ?? {};
+    for (const [id, entry] of Object.entries(entries)) {
+      console.error(
+        "agent " + id +
+          ": runtime=" + (entry?.runtime?.type ?? "embedded") +
+          " model=" + (entry?.model?.primary ?? entry?.model ?? "<inherited>"),
+      );
+    }
+    console.error(
+      "agent <defaults>: model=" +
+        (cfg.agents?.defaults?.model?.primary ?? cfg.agents?.defaults?.model ?? "<unset>"),
+    );
+  ' "$config_path"
 fi
 
 # The Gateway resolves every bind mode to an IPv4 address, so a platform whose
@@ -284,4 +453,42 @@ if [ -n "${OPENCLAW_IPV6_PROXY_PORT:-}" ]; then
   runuser -u node -- node /usr/local/lib/openclaw-ipv6-proxy.js &
 fi
 
-exec runuser -u node -- "$@"
+# A restart request drains the Gateway, closes the server, and expects the
+# process to come back. Railway only revives a container that FAILED, so an exit
+# code 0 here ends the deployment for good - and there is no shell beside a
+# stopped container to bring it back, which is this deployment's whole premise.
+# Own that gap: a clean exit means "start me again", while a crash still leaves
+# through the platform's restart policy, so a bad config keeps surfacing as a
+# failed deploy instead of spinning here forever.
+stopping=0
+gateway_pid=""
+
+# Supervising costs the exec: SIGTERM now lands on this shell instead of the
+# Gateway. Forward it, or a container stop would skip the graceful shutdown that
+# flushes sessions and would look like a restart request on the way back up.
+forward_stop() {
+  stopping=1
+  if [ -n "$gateway_pid" ]; then
+    kill -TERM "$gateway_pid" 2>/dev/null || true
+  fi
+}
+trap forward_stop TERM INT
+
+while true; do
+  runuser -u node -- "$@" &
+  gateway_pid=$!
+  status=0
+  # A trapped signal makes `wait` return before the child does. Keep waiting so
+  # the decision below reads the Gateway's own exit status, not the signal's.
+  while true; do
+    wait "$gateway_pid" || status=$?
+    [ "$status" -gt 128 ] || break
+    status=0
+  done
+  gateway_pid=""
+  [ "$stopping" -eq 0 ] || exit 0
+  [ "$status" -eq 0 ] || exit "$status"
+  echo "gateway exited cleanly; restarting it" >&2
+  # Bound the loop: an immediate repeat is a restart storm, not a restart.
+  sleep 1
+done
